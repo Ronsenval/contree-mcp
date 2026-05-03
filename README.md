@@ -85,12 +85,27 @@ contree-mcp --mode http --http-port 9452 --token YOUR_TOKEN
 
 ### Container Installation (Alpine/Ubuntu/Debian)
 
-PEP 668 requires additional flags:
+These distros enable [PEP 668](https://peps.python.org/pep-0668/), which protects the system Python from `pip install` mutations. Use an isolated tool installer:
+
+```bash
+# Recommended: isolated install, no PEP 668 conflicts
+uv tool install contree-mcp
+# or
+pipx install contree-mcp
+```
+
+Both put `contree-mcp` on your `PATH` while keeping its dependencies in a private venv. `uvx contree-mcp` (used by the MCP-client snippets above) also works without installation since it spawns an ephemeral env per invocation.
+
+<details>
+<summary>If you really must install into the system Python</summary>
 
 ```bash
 pip install --break-system-packages contree-mcp
-uv pip install --break-system-packages --python /usr/bin/python3 contree-mcp
 ```
+
+`--break-system-packages` overrides PEP 668 protections and can put your system Python in an inconsistent state. Prefer `uv tool install` / `pipx` unless you have a specific reason.
+
+</details>
 
 ## Configuration
 
