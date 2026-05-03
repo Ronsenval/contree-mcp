@@ -344,49 +344,39 @@ Use this to rollback to any ancestor or understand how an image was created.
 **Requirements:** Python 3.10+
 
 ```bash
-# Clone and install in dev mode
 git clone https://github.com/nebius/contree-mcp.git
 cd contree-mcp
-uv sync --group dev
+make install
 ```
 
 ### Development Workflow
 
-Follow this sequence when making changes:
+```bash
+make check     # lint + typecheck + tests (run before pushing)
+make test      # tests only (quiet)
+make format    # auto-fix formatting and lint
+make help      # full target list
+```
 
-1. **Make code changes** - Edit files in `contree_mcp/`
+When making changes:
 
-2. **Run tests** - Ensure all tests pass
-   ```bash
-   uv run pytest tests/ -v
-   ```
+1. **Edit code** in `contree_mcp/`
+2. **Run `make check`** — must pass before opening a PR
+3. **Update documentation** if behavior changes:
+   - `README.md` — user-facing docs, examples, tool descriptions
+   - `llm.txt` — shared context for AI agents (architecture, class hierarchy, internals)
 
-3. **Run linter** - Fix any style issues
-   ```bash
-   uv run ruff check contree_mcp
-   uv run ruff format contree_mcp  # Auto-fix formatting
-   ```
+### Without `make`
 
-4. **Type check** (optional but recommended)
-   ```bash
-   uv run mypy contree_mcp
-   ```
-
-5. **Update documentation** - Keep docs in sync with code
-   - `README.md` - User-facing docs, examples, tool descriptions
-   - `llm.txt` - Shared context for AI agents (architecture, class hierarchy, internals)
-
-### Quick Commands
+If you'd rather not use `make`, the underlying `uv run` commands are:
 
 ```bash
-# Full validation cycle
-uv run pytest tests/ -q && uv run ruff check contree_mcp && echo "All checks passed"
-
-# Run specific test file
-uv run pytest tests/test_tools/test_run.py -v
-
-# Auto-fix linting issues
-uv run ruff check contree_mcp --fix
+uv sync --group dev                                    # install
+uv run pytest tests/ -q                                # test
+uv run ruff check contree_mcp                          # lint
+uv run ruff format contree_mcp                         # format
+uv run mypy contree_mcp                                # typecheck
+uv run pytest tests/tools/test_run_command.py -v       # single test file
 ```
 
 ### Testing GitHub Actions Locally
