@@ -492,6 +492,9 @@ class TestAmainSTDIOMode:
         env["CONTREE_HOME"] = str(tmp_path)
         env["CONTREE_NO_UPDATE_CHECK"] = "1"
 
+        # ``tools/list`` and ``initialize`` responses include the full set of
+        # tool descriptions on a single JSON line. The default StreamReader
+        # cap (64 KiB) is below that envelope, so raise the buffer.
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -505,6 +508,7 @@ class TestAmainSTDIOMode:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=4 * 1024 * 1024,
         )
 
         try:

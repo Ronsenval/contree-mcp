@@ -201,6 +201,7 @@ def create_mcp_app(**kwargs: Any) -> FastMCP:
     register_tool(mcp, tools.list_operations)
     register_tool(mcp, tools.wait_operations)
     register_tool(mcp, tools.cancel_operation)
+    register_tool(mcp, tools.whoami)
 
     # some agents can not use resources, so we expose these as tools too
     register_tool(mcp, tools.list_files)

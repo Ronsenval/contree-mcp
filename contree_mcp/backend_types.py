@@ -47,6 +47,13 @@ class Image(BaseModel):
     uuid: str = Field(description="Image UUID")
     tag: str | None = Field(default=None, description="Image tag or null")
     created_at: str = Field(default="", description="ISO 8601 creation timestamp")
+    operation_uuid: str | None = Field(
+        default=None,
+        description=(
+            "UUID of the operation that created this image. Null for images from another"
+            " namespace (public/shared) or images not created by an operation."
+        ),
+    )
 
 
 class ImageListResponse(BaseModel):
@@ -91,12 +98,17 @@ class FileResponse(BaseModel):
     """Response from file endpoints.
 
     API handlers:
-    - POST /files -> FileResponse
-    - GET /files?sha256={hash} -> FileResponse
+    - POST /files -> FileResponse (uuid, sha256, size required)
+    - GET /files/{sha256} -> File (uuid, sha256, size, created_at, updated_at required)
+
+    Timestamps are only set on GET; POST omits them.
     """
 
     uuid: str = Field(description="File UUID")
     sha256: str = Field(description="SHA256 hash of file content")
+    size: int = Field(default=-1, description="File size in bytes; -1 if unknown")
+    created_at: str | None = Field(default=None, description="First-upload timestamp (ISO 8601)")
+    updated_at: str | None = Field(default=None, description="Last-upload timestamp (ISO 8601)")
 
 
 class InstanceSpawnResponse(BaseModel):
@@ -167,6 +179,7 @@ class ConsumedResources(BaseModel):
     unshared_memory: int = -1
     user_cpu_time: float = -1.0
     voluntary_switches: int = -1
+    layer_bytes: int = -1
 
 
 class ProcessExitState(BaseModel):
@@ -193,20 +206,47 @@ class InstanceFileSpec(BaseModel):
     gid: int = 0
 
 
+class InstanceResourcesLimits(BaseModel):
+    """Per-instance resource caps. Mirrors the backend ``InstanceResourcesLimits``.
+
+    Default for ``max_layer_bytes`` matches the backend (12 GiB) — see
+    ``contree.types.InstanceResourcesLimits`` and ``DataUnits.GB(12)``.
+    """
+
+    max_layer_bytes: PositiveInt = Field(
+        default=12 * 1024**3,
+        description="Maximum writable layer size in bytes (default 12 GiB).",
+    )
+
+
 class InstanceMetadata(BaseModel):
-    """Metadata for instance execution operations"""
+    """Metadata for instance execution operations."""
 
     command: str = Field(description="Command to run")
     image: str = Field(description="Image UUID or string starts with 'tag:'")
     hostname: str = "linuxkit"
     args: list[str] = Field(default_factory=list, description="Command arguments, must be used with shell is false")
     shell: bool = Field(default=False, description="In this mode command is a shell expression and args must be empty")
-    env: dict[str, str] = Field(default_factory=dict)
-    cwd: str = Field(default="/root", description="Path to the working directory, must be absolute")
+    # ``None`` value removes the variable from the preserved environment;
+    # see ``preserve_env`` semantics in the API spec.
+    env: dict[str, str | None] = Field(default_factory=dict)
+    preserve_env: bool = Field(
+        default=False,
+        description="Preserve environment variables in resulting image after execution",
+    )
+    cwd: str = Field(
+        default="",
+        description=(
+            "Working directory; absolute path or empty string. Empty means use the image's default."
+        ),
+    )
+    uid: int = Field(default=0, ge=0, description="User ID to run the process as")
+    gid: int = Field(default=0, ge=0, description="Group ID to run the process as")
     disposable: bool = False
+    resources_limits: InstanceResourcesLimits = Field(default_factory=InstanceResourcesLimits)
     stdin: Stream = Stream(value="")
     timeout: PositiveInt = 60
-    truncate_output_at: ByteSize = ByteSize(64 * 1024)
+    truncate_output_at: ByteSize = ByteSize(1024 * 1024)
     files: dict[str, InstanceFileSpec] = Field(default_factory=dict, description="Files to add to the image")
     result: InstanceResult | None = None
 
@@ -252,6 +292,12 @@ class OperationSummary(BaseModel):
     status: OperationStatus = Field(description="Operation status")
     error: str | None = Field(default=None, description="Error message if failed")
     created_at: str = Field(default="", description="ISO 8601 creation timestamp")
+    duration: float | None = Field(default=None, description="Operation duration in seconds")
+    image_size: int | None = Field(default=None, description="Bytes written for the resulting image/layer(s)")
+    consumed_cpu: float | None = Field(default=None, description="CPU seconds reported by the in-VM init")
+    consumed_memory: int | None = Field(default=None, description="Peak memory (max_rss) reported by the in-VM init")
+    image_uuid: str | None = Field(default=None, description="Source image UUID; null for IMAGE_IMPORT ops")
+    result_image_uuid: str | None = Field(default=None, description="UUID of the image produced; set only on SUCCESS")
 
 
 class OperationListResponse(BaseModel):
@@ -283,9 +329,15 @@ class OperationResponse(BaseModel):
     status: OperationStatus = Field(description="Operation status")
     kind: OperationKind = Field(description="Operation kind")
     error: str | None = Field(default=None, description="Error message if any")
+    created_at: str = Field(default="", description="ISO 8601 creation timestamp")
     metadata: InstanceMetadata | ImportImageMetadata | None = Field(default=None, description="Operation metadata")
     result: OperationResult | None = Field(default=None, description="Operation result")
-    duration: float = Field(default=0.0, description="Operation duration")
+    duration: float | None = Field(default=None, description="Operation duration in seconds")
+    image_size: int | None = Field(default=None, description="Bytes written for the resulting image/layer(s)")
+    consumed_cpu: float | None = Field(default=None, description="CPU seconds reported by the in-VM init")
+    consumed_memory: int | None = Field(default=None, description="Peak memory (max_rss) reported by the in-VM init")
+    image_uuid: str | None = Field(default=None, description="Source image UUID; null for IMAGE_IMPORT ops")
+    result_image_uuid: str | None = Field(default=None, description="UUID of the image produced; set only on SUCCESS")
 
     @model_validator(mode="before")
     @classmethod
@@ -305,3 +357,25 @@ class CancelOperationResponse(BaseModel):
 
     uuid: str = Field(default="", description="Operation UUID")
     status: OperationStatus = Field(default=OperationStatus.CANCELLED)
+
+
+class WhoAmIResponse(BaseModel):
+    """Response from token introspection endpoint.
+
+    API handlers:
+    - GET /whoami -> WhoAmIResponse
+
+    ``permissions`` maps permission names to booleans (e.g. ``import``,
+    ``spawn``, ``list``). ``limits`` maps resource limit names to ints
+    (e.g. ``instance_max_timeout``). ``operations_stat`` is reserved
+    for future use and may be empty.
+    """
+
+    token_uuid: str = Field(description="UUID of the authentication token")
+    token_expiration: int | None = Field(
+        default=None,
+        description="Token expiration time as Unix timestamp, or null if not set",
+    )
+    permissions: dict[str, bool] = Field(default_factory=dict)
+    limits: dict[str, int] = Field(default_factory=dict)
+    operations_stat: dict[str, int] = Field(default_factory=dict)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import sys
 import textwrap
 from pathlib import Path
 
@@ -175,6 +176,10 @@ def test_profile_repr_masks_token() -> None:
     assert "***" in text
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows reports POSIX mode as 0o666 via ACLs, not file-mode bits.",
+)
 def test_save_uses_restrictive_permissions(config_path: Path) -> None:
     cfg = Config(config_path)
     cfg["mine"] = ConfigProfile(

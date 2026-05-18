@@ -30,6 +30,7 @@ from .backend_types import (
     ImportImageMetadata,
     InstanceFileSpec,
     InstanceMetadata,
+    InstanceResourcesLimits,
     InstanceSpawnResponse,
     OperationKind,
     OperationListResponse,
@@ -38,6 +39,7 @@ from .backend_types import (
     OperationStatus,
     OperationSummary,
     Stream,
+    WhoAmIResponse,
 )
 from .cache import Cache
 
@@ -352,6 +354,10 @@ class ContreeClient:
         response = await self._request("GET", f"/inspect/{image_uuid}/", model=Image)
         return response.body
 
+    async def whoami(self) -> WhoAmIResponse:
+        response = await self._request("GET", "/whoami", model=WhoAmIResponse)
+        return response.body
+
     async def list_directory(self, image_uuid: str, path: str = "/") -> DirectoryList:
         path = f"/{path.lstrip('/')}"
         cache_key = f"{image_uuid}:{path}"
@@ -531,25 +537,38 @@ class ContreeClient:
         image: str,
         shell: bool = True,
         args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        cwd: str = "/root",
+        env: dict[str, str | None] | None = None,
+        preserve_env: bool = False,
+        cwd: str = "",
+        uid: int = 0,
+        gid: int = 0,
         timeout: int = 30,
         hostname: str = "linuxkit",
         disposable: bool = False,
         stdin: str | None = None,
         files: dict[str, dict[str, Any]] | None = None,
         truncate_output_at: int = 1048576,
+        max_layer_bytes: int | None = None,
     ) -> str:
+        resources_limits = (
+            InstanceResourcesLimits(max_layer_bytes=max_layer_bytes)
+            if max_layer_bytes is not None
+            else InstanceResourcesLimits()
+        )
         metadata = InstanceMetadata(
             command=command,
             image=image,
             shell=shell,
             args=args or [],
             env=env or {},
+            preserve_env=preserve_env,
             cwd=cwd,
+            uid=uid,
+            gid=gid,
             timeout=timeout,
             hostname=hostname,
             disposable=disposable,
+            resources_limits=resources_limits,
             stdin=Stream.from_bytes(stdin.encode()) if stdin else Stream(value=""),
             truncate_output_at=ByteSize(truncate_output_at),
             files={k: InstanceFileSpec(**v) for k, v in (files or {}).items()},

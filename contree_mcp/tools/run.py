@@ -8,8 +8,11 @@ async def run(
     command: str,
     image: str,
     shell: bool = True,
-    env: dict[str, str] | None = None,
-    cwd: str = "/root",
+    env: dict[str, str | None] | None = None,
+    preserve_env: bool = False,
+    cwd: str = "",
+    uid: int = 0,
+    gid: int = 0,
     timeout: int = 30,
     disposable: bool = True,
     stdin: str | None = None,
@@ -17,6 +20,7 @@ async def run(
     files: dict[str, str] | None = None,
     wait: bool = True,
     truncate_output_at: int = 8000,
+    max_layer_bytes: int | None = None,
 ) -> OperationResponse | dict[str, str]:
     """
     Execute command in isolated container. Spawns microVM.
@@ -40,6 +44,11 @@ async def run(
       `{scope}/{purpose}/{base}` (base includes tag, e.g. python:3.11-slim)
     - Launch async with wait=false, poll with get_operation or wait_operations
     - Use env parameter for environment variables, not shell export
+    - cwd: empty string ("") means use the image's default working directory
+    - env values may be set to null to unset a preserved variable when preserve_env=true
+    - preserve_env=true merges env into the resulting image's metadata/env
+    - uid/gid: run the process as a specific UID/GID (default 0/0 = root)
+    - max_layer_bytes: cap on writable-layer size in bytes (default 12 GiB)
 
     RETURNS: stdout, stderr, exit_code, result_image (when disposable=false)
     - Use result_image UUID to chain subsequent commands
@@ -87,12 +96,16 @@ async def run(
         image=image_uuid,
         shell=shell,
         env=env,
+        preserve_env=preserve_env,
         cwd=cwd,
+        uid=uid,
+        gid=gid,
         timeout=timeout,
         disposable=disposable,
         stdin=stdin,
         files=spawn_files,
         truncate_output_at=truncate_output_at,
+        max_layer_bytes=max_layer_bytes,
     )
     if wait:
         return await client.wait_for_operation(operation_id)

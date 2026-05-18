@@ -17,14 +17,13 @@ async def get_image(image: str) -> Image:
     - Resolve tag to underlying UUID
     - Prefer verifying an existing image before using import_image
 
-    RETURNS: uuid, tag, created_at
+    RETURNS: uuid, tag, created_at, operation_uuid (UUID of the operation that
+    produced the image, or null for public/shared images)
 
     GUIDES:
     - [USEFUL] contree://guide/quickstart - UUIDs vs tags guidance
     """
     client = CLIENT.get()
     if image.startswith("tag:"):
-        img = await client.get_image_by_tag(image[4:])
-    else:
-        img = await client.get_image(image)
-    return Image(uuid=img.uuid, tag=img.tag, created_at=img.created_at)
+        return await client.get_image_by_tag(image[4:])
+    return await client.get_image(image)
