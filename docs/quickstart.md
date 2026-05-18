@@ -13,15 +13,46 @@ Contree is in **Early Access**. To get an API token, fill out the request form a
 
 ## Installation
 
-### Step 1: Create Config File
+### Step 1: Authenticate
 
-Store your credentials in `~/.config/contree/mcp.ini`:
+`contree-mcp` reads the same `auth.ini` that
+[`contree-cli`](https://docs.contree.dev/cli/tutorial/installation.html)
+writes, so a single login covers both tools.
+
+**Recommended:** install `contree-cli` and run `contree auth`:
+
+```bash
+uv tool install contree-cli   # or: pip install contree-cli
+contree auth                  # interactive setup
+```
+
+This writes `~/.config/contree/auth.ini` (mode `0600`). The MCP server
+picks it up automatically.
+
+If you prefer to write the file by hand:
 
 ```ini
 [DEFAULT]
-url = https://contree.dev/
+profile = default
+
+[profile:default]
+type = iam
+url = https://api.tokenfactory.nebius.com/sandboxes
+token = <TOKEN HERE>
+project = <NEBIUS PROJECT ID>
+```
+
+For the legacy JWT flow (`contree.dev`), use:
+
+```ini
+[profile:default]
+type = jwt
+url = https://contree.dev
 token = <TOKEN HERE>
 ```
+
+To switch between profiles later: `contree auth switch <name>`, or
+pass `--profile <name>` / `CONTREE_PROFILE=<name>` to `contree-mcp`.
 
 ### Step 2: Configure Your MCP Client
 
@@ -65,7 +96,12 @@ args = ["contree-mcp"]
 ::::
 
 :::{note}
-Alternatively, you can pass credentials via environment variables (`CONTREE_MCP_TOKEN`, `CONTREE_MCP_URL`) in your MCP client config, but this is not recommended as tokens may appear in process listings.
+You can also pass credentials via environment variables (`CONTREE_TOKEN`,
+`CONTREE_URL`, `CONTREE_PROJECT`, `CONTREE_PROFILE`) or CLI flags
+(`--token`, `--url`, `--project`, `--profile`). These are useful for
+ephemeral overrides — but tokens passed via env may show up in process
+listings, so for routine use prefer the `auth.ini` profile written by
+`contree auth`.
 :::
 
 ## Your First Container

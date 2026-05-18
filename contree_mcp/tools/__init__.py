@@ -17,6 +17,7 @@ from .run import run
 from .set_tag import set_tag
 from .upload import upload
 from .wait_operations import wait_operations
+from .whoami import whoami
 
 __all__ = [
     "cancel_operation",
@@ -36,4 +37,5 @@ __all__ = [
     "set_tag",
     "upload",
     "wait_operations",
+    "whoami",
 ]

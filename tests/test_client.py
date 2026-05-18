@@ -16,6 +16,7 @@ from contree_mcp.backend_types import (
 )
 from contree_mcp.cache import Cache
 from contree_mcp.client import ContreeClient, ContreeError
+from contree_mcp.config import AuthType, ConfigProfile
 from tests.conftest import (
     FakeResponse,
     FakeResponses,
@@ -72,6 +73,114 @@ class TestContreeClientInit:
         """Test that /v1 is added to base_url."""
         client = ContreeClient("https://api.example.com", "token", cache=tmp_cache)
         assert client.base_url == "https://api.example.com/v1"
+
+
+class TestContreeClientAuthType:
+    """Wire-format coverage for JWT vs IAM auth modes."""
+
+    @pytest.mark.asyncio
+    async def test_jwt_headers_no_project(self, tmp_cache: Cache) -> None:
+        client = ContreeClient(
+            "https://contree.dev", "jwt-token", cache=tmp_cache,
+            auth_type=AuthType.JWT,
+        )
+        assert client.headers["Authorization"] == "Bearer jwt-token"
+        assert "Project" not in client.headers
+
+    @pytest.mark.asyncio
+    async def test_jwt_drops_project_even_if_supplied(self, tmp_cache: Cache) -> None:
+        """A JWT client built with a stray project must NOT emit the Project header."""
+        client = ContreeClient(
+            "https://contree.dev", "jwt-token", cache=tmp_cache,
+            project="ignored-on-jwt",
+            auth_type=AuthType.JWT,
+        )
+        assert "Project" not in client.headers
+
+    @pytest.mark.asyncio
+    async def test_iam_emits_project_header(self, tmp_cache: Cache) -> None:
+        client = ContreeClient(
+            "https://api.tokenfactory.nebius.com/sandboxes",
+            "iam-token",
+            cache=tmp_cache,
+            project="proj-123",
+            auth_type=AuthType.IAM,
+        )
+        assert client.headers["Authorization"] == "Bearer iam-token"
+        assert client.headers["Project"] == "proj-123"
+
+    @pytest.mark.asyncio
+    async def test_iam_requires_project(self, tmp_cache: Cache) -> None:
+        with pytest.raises(ValueError, match="IAM auth requires a project ID"):
+            ContreeClient(
+                "https://api.tokenfactory.nebius.com/sandboxes",
+                "iam-token",
+                cache=tmp_cache,
+                auth_type=AuthType.IAM,
+            )
+
+    @pytest.mark.asyncio
+    async def test_from_profile_jwt(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="legacy",
+            url="https://contree.dev",
+            token="jwt-token",
+            auth_type=AuthType.JWT,
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        assert client.auth_type == AuthType.JWT
+        assert "Project" not in client.headers
+        assert client.headers["Authorization"] == "Bearer jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_from_profile_iam(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="prod",
+            url="https://api.tokenfactory.nebius.com/sandboxes",
+            token="iam-token",
+            auth_type=AuthType.IAM,
+            project="proj-xyz",
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        assert client.auth_type == AuthType.IAM
+        assert client.headers["Project"] == "proj-xyz"
+
+    @pytest.mark.asyncio
+    async def test_from_profile_rejects_missing_token(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="empty",
+            url="https://contree.dev",
+            token=None,
+            auth_type=AuthType.JWT,
+        )
+        with pytest.raises(ValueError, match="has no token"):
+            ContreeClient.from_profile(profile, cache=tmp_cache)
+
+    @pytest.mark.asyncio
+    async def test_from_profile_rejects_jwt_without_url(self, tmp_cache: Cache) -> None:
+        """JWT has no default URL — the legacy host must be supplied."""
+        profile = ConfigProfile(
+            name="bare-jwt",
+            url="",
+            token="t",
+            auth_type=AuthType.JWT,
+        )
+        with pytest.raises(ValueError, match="no url"):
+            ContreeClient.from_profile(profile, cache=tmp_cache)
+
+    @pytest.mark.asyncio
+    async def test_from_profile_iam_uses_default_url(self, tmp_cache: Cache) -> None:
+        """IAM profile without a URL falls back to ContreeClient.DEFAULT_URLS."""
+        profile = ConfigProfile(
+            name="bare-iam",
+            url="",
+            token="t",
+            auth_type=AuthType.IAM,
+            project="proj",
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        # The client appends ``/v1`` to whatever base URL it receives.
+        assert client.base_url == ContreeClient.DEFAULT_URLS[AuthType.IAM] + "/v1"
 
 
 class TestListImages(TestCase):
@@ -863,7 +972,7 @@ class TestCheckFileExistsByHash(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.OK),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.OK),
         }
 
     @pytest.mark.asyncio
@@ -879,7 +988,7 @@ class TestCheckFileExistsByHashNotFound(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
         }
 
     @pytest.mark.asyncio
@@ -895,7 +1004,7 @@ class TestCheckFileExistsByHashException(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
         }
 
     @pytest.mark.asyncio
@@ -905,47 +1014,13 @@ class TestCheckFileExistsByHashException(TestCase):
         assert exists is False
 
 
-class TestCheckFileExists(TestCase):
-    """Tests for check_file_exists method."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.OK),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_true(self, contree_client: ContreeClient):
-        """Test uploaded file exists."""
-        exists = await contree_client.check_file_exists("file-123")
-
-        assert exists is True
-
-
-class TestCheckFileExistsFalse(TestCase):
-    """Tests for check_file_exists returns False."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_not_found(self, contree_client: ContreeClient):
-        """Test uploaded file does not exist."""
-        exists = await contree_client.check_file_exists("nonexistent")
-
-        assert exists is False
-
-
 class TestGetFileByHash(TestCase):
     """Tests for get_file_by_hash method."""
 
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(body={"uuid": "file-123", "sha256": "abc123"}),
+            "GET /files/{sha256}": FakeResponse(body={"uuid": "file-123", "sha256": "abc123"}),
         }
 
     @pytest.mark.asyncio
@@ -958,13 +1033,67 @@ class TestGetFileByHash(TestCase):
         assert result.sha256 == "abc123"
 
 
+class TestGetFileByHashListShape(TestCase):
+    """Regression: backend wraps in {files:[…]}; client still parses."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /files/{sha256}": FakeResponse(
+                body={
+                    "files": [
+                        {
+                            "uuid": "file-456",
+                            "sha256": "deadbeef",
+                            "size": 12,
+                            "created_at": "2026-05-18T09:16:55Z",
+                            "updated_at": "2026-05-18T09:16:55Z",
+                            "future_field": "ignored",
+                        }
+                    ]
+                }
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_file_by_hash_unwraps_list_envelope(self, contree_client: ContreeClient):
+        result = await contree_client.get_file_by_hash("deadbeef")
+        assert result is not None
+        assert result.uuid == "file-456"
+        assert result.sha256 == "deadbeef"
+
+
+class TestGetFileByHashAdditiveFields(TestCase):
+    """Regression: unknown additive fields are ignored, not fatal."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /files/{sha256}": FakeResponse(
+                body={
+                    "uuid": "file-789",
+                    "sha256": "cafebabe",
+                    "size": 7,
+                    "stored_in": "s3://bucket/key",
+                    "metadata": {"owner": "someone"},
+                }
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_file_by_hash_ignores_unknown_fields(self, contree_client: ContreeClient):
+        result = await contree_client.get_file_by_hash("cafebabe")
+        assert result is not None
+        assert result.uuid == "file-789"
+
+
 class TestGetFileByHashNotFound(TestCase):
     """Tests for get_file_by_hash when not found."""
 
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
+            "GET /files/{sha256}": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
         }
 
     @pytest.mark.asyncio
@@ -981,7 +1110,7 @@ class TestGetFileByHashOtherError(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
+            "GET /files/{sha256}": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
         }
 
     @pytest.mark.asyncio
@@ -1088,22 +1217,6 @@ class TestFileExistsException(TestCase):
     async def test_file_exists_on_exception(self, contree_client: ContreeClient):
         """Test file_exists returns False on exception."""
         exists = await contree_client.file_exists("img-123", "/some/path")
-        assert exists is False
-
-
-class TestCheckFileExistsException(TestCase):
-    """Tests for check_file_exists when an exception occurs."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_on_exception(self, contree_client: ContreeClient):
-        """Test check_file_exists returns False on exception."""
-        exists = await contree_client.check_file_exists("file-uuid-123")
         assert exists is False
 
 

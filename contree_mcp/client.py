@@ -30,6 +30,7 @@ from .backend_types import (
     ImportImageMetadata,
     InstanceFileSpec,
     InstanceMetadata,
+    InstanceResourcesLimits,
     InstanceSpawnResponse,
     OperationKind,
     OperationListResponse,
@@ -38,14 +39,35 @@ from .backend_types import (
     OperationStatus,
     OperationSummary,
     Stream,
+    WhoAmIResponse,
 )
 from .cache import Cache
+from .config import AuthType, Config, ConfigProfile
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 OperationTrackingKind = Literal["instance", "image_import"]
 
 log = logging.getLogger(__name__)
+
+
+def mcp_version() -> str:
+    """Installed ``contree-mcp`` version, or ``"unknown"`` for source checkouts."""
+    try:
+        return importlib.metadata.version("contree-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+# Single source of truth for the User-Agent string. Used by:
+#  - the ContreeClient HTTP headers (every backend call)
+#  - the UpdateChecker PyPI request (so PyPI sees the same identifier)
+#  - the ``--version`` CLI flag (so users can read the exact UA we emit)
+MCP_USER_AGENT = (
+    f"contree-mcp/{mcp_version()} "
+    f"Python/{'.'.join(map(str, sys.version_info))} "
+    f"{platform.platform()}"
+)
 
 
 class StreamResponse:
@@ -108,28 +130,35 @@ class ContreeError(Exception):
 
 
 class ContreeClient:
-    PYTHON_VERSION = f"{'.'.join(map(str, sys.version_info))}"
-    try:
-        LIBRARY_VERSION = importlib.metadata.version("contree-mcp")
-    except Exception:
-        LIBRARY_VERSION = "unknown"
+    """HTTP client for the Contree backend.
 
-    OS_NAME = platform.system()
-    OS_VERSION = platform.release()
+    Supports the two auth modes defined by the API:
+
+    - ``AuthType.JWT`` — legacy self-issued bearer token (e.g. the
+      ``contree.dev`` deployment). Sends ``Authorization: Bearer <token>``.
+    - ``AuthType.IAM`` — Nebius IAM token plus a project ID. Sends
+      ``Authorization: Bearer <token>`` and ``Project: <project>``.
+
+    The defaults make a JWT client (token only) the cheapest construction
+    so existing call sites keep working. Use :meth:`from_profile` to
+    build the right client from a resolved :class:`ConfigProfile`.
+    """
+
     POLL_CONCURRENCY = 10
+
+    # Default base URL per auth scheme. Mirrors
+    # ``contree_cli.client.ContreeIAMClient.DEFAULT_URL`` / ``ContreeJWTClient``
+    # (which has no default — the legacy ``contree.dev`` URL must be
+    # supplied explicitly). The IAM value is sourced from ``Config`` so
+    # the resolver and the client never drift.
+    DEFAULT_URLS: Mapping[AuthType, str] = MappingProxyType({
+        AuthType.IAM: Config.DEFAULT_IAM_URL,
+        AuthType.JWT: "",
+    })
 
     HEADERS = (
         ("Content-Type", "application/json"),
-        (
-            "User-Agent",
-            " ".join(
-                (
-                    f"contree-mcp/{LIBRARY_VERSION}",
-                    f"python/{PYTHON_VERSION}",
-                    f"{OS_NAME}/{OS_VERSION}",
-                )
-            ),
-        ),
+        ("User-Agent", MCP_USER_AGENT),
     )
 
     def __init__(
@@ -137,17 +166,62 @@ class ContreeClient:
         base_url: str,
         token: str,
         cache: Cache,
+        project: str | None = None,
         timeout: float = 30.0,
         poll_interval: float = 1.0,
+        auth_type: AuthType = AuthType.JWT,
     ):
+        if auth_type == AuthType.IAM and not project:
+            raise ValueError("IAM auth requires a project ID")
+        if auth_type == AuthType.JWT and project:
+            log.debug("JWT client constructed with a project — Project header will not be sent")
         self.base_url = base_url.rstrip("/") + "/v1"
         self.token = token
+        self.project = project
+        self.auth_type = auth_type
         self.timeout = httpx.Timeout(timeout)
         self._cache = cache
 
         self._poll_interval = poll_interval
         self._poll_semaphore = asyncio.Semaphore(self.POLL_CONCURRENCY)
         self._tracked_operations: dict[str, asyncio.Task[OperationResponse]] = {}
+
+    @classmethod
+    def from_profile(
+        cls,
+        profile: ConfigProfile,
+        cache: Cache,
+        timeout: float = 30.0,
+        poll_interval: float = 1.0,
+    ) -> Self:
+        """Build a client from a resolved :class:`ConfigProfile`.
+
+        Mirrors ``contree_cli.client.client_from_profile``: validates
+        token / project / url against the profile's ``auth_type`` and
+        produces a client wired for the correct auth scheme.
+
+        URL fallback follows the CLI: IAM falls back to
+        :attr:`DEFAULT_URLS` (Nebius IAM endpoint); JWT must have an
+        explicit URL because the legacy ``contree.dev`` host can't be
+        inferred.
+        """
+        if not profile.token:
+            raise ValueError(f"profile {profile.name!r} has no token")
+        base_url = profile.url or cls.DEFAULT_URLS[profile.auth_type]
+        if not base_url:
+            raise ValueError(
+                f"profile {profile.name!r} ({profile.auth_type}) has no url and "
+                f"this auth scheme has no default — pass --url",
+            )
+        return cls(
+            base_url=base_url,
+            token=profile.token,
+            cache=cache,
+            project=profile.project,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            auth_type=profile.auth_type,
+        )
 
     @property
     def cache(self) -> Cache:
@@ -159,6 +233,11 @@ class ContreeClient:
     def headers(self) -> Mapping[str, str]:
         hdrs = dict(self.HEADERS)
         hdrs["Authorization"] = f"Bearer {self.token}"
+        # IAM requires the Project header; JWT must not send it even if
+        # ``project`` happens to be set (the legacy backend would reject).
+        if self.auth_type == AuthType.IAM:
+            assert self.project, "IAM client missing project — should have been caught in __init__"
+            hdrs["Project"] = self.project
         return MappingProxyType(hdrs)
 
     @cached_property
@@ -348,6 +427,10 @@ class ContreeClient:
         response = await self._request("GET", f"/inspect/{image_uuid}/", model=Image)
         return response.body
 
+    async def whoami(self) -> WhoAmIResponse:
+        response = await self._request("GET", "/whoami", model=WhoAmIResponse)
+        return response.body
+
     async def list_directory(self, image_uuid: str, path: str = "/") -> DirectoryList:
         path = f"/{path.lstrip('/')}"
         cache_key = f"{image_uuid}:{path}"
@@ -483,25 +566,10 @@ class ContreeClient:
     async def check_file_exists_by_hash(self, sha256: str) -> bool:
         """Check if file exists on server by SHA256 hash. Always hits server (no cache)."""
         try:
-            status = await self._head_request("/files", params={"sha256": sha256})
+            status = await self._head_request(f"/files/{sha256}")
             return status == 200
         except Exception:
             return False
-
-    async def check_file_exists(self, file_uuid: str) -> bool:
-        """Check if an uploaded file exists by UUID. File existence is immutable - no TTL needed."""
-        entry = await self.cache.get("file_exists_by_uuid", file_uuid)
-        if entry:
-            return bool(entry.data["exists"])
-
-        try:
-            status = await self._head_request("/files", params={"uuid": file_uuid})
-            exists = status == 200
-        except Exception:
-            exists = False
-
-        await self.cache.put("file_exists_by_uuid", file_uuid, {"exists": exists})
-        return exists
 
     async def get_file_by_hash(self, sha256: str) -> FileResponse | None:
         """Get file UUID by SHA256 hash. Hash-based lookup is immutable - no TTL needed."""
@@ -512,7 +580,7 @@ class ContreeClient:
             return FileResponse.model_validate(entry.data)
 
         try:
-            response = await self._request("GET", "/files", model=FileResponse, params={"sha256": sha256})
+            response = await self._request("GET", f"/files/{sha256}", model=FileResponse)
             await self.cache.put("file_by_hash", sha256, response.body.model_dump())
             return response.body
         except ContreeError as e:
@@ -527,25 +595,38 @@ class ContreeClient:
         image: str,
         shell: bool = True,
         args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        cwd: str = "/root",
+        env: dict[str, str | None] | None = None,
+        preserve_env: bool = False,
+        cwd: str = "",
+        uid: int = 0,
+        gid: int = 0,
         timeout: int = 30,
         hostname: str = "linuxkit",
         disposable: bool = False,
         stdin: str | None = None,
         files: dict[str, dict[str, Any]] | None = None,
         truncate_output_at: int = 1048576,
+        max_layer_bytes: int | None = None,
     ) -> str:
+        resources_limits = (
+            InstanceResourcesLimits(max_layer_bytes=max_layer_bytes)
+            if max_layer_bytes is not None
+            else InstanceResourcesLimits()
+        )
         metadata = InstanceMetadata(
             command=command,
             image=image,
             shell=shell,
             args=args or [],
             env=env or {},
+            preserve_env=preserve_env,
             cwd=cwd,
+            uid=uid,
+            gid=gid,
             timeout=timeout,
             hostname=hostname,
             disposable=disposable,
+            resources_limits=resources_limits,
             stdin=Stream.from_bytes(stdin.encode()) if stdin else Stream(value=""),
             truncate_output_at=ByteSize(truncate_output_at),
             files={k: InstanceFileSpec(**v) for k, v in (files or {}).items()},

@@ -102,6 +102,7 @@ def test_parser(tmp_path: Path, mcp_server_socket: socket.socket) -> Parser:
     return Parser().parse_args(
         [
             "--token=test-token",
+            "--auth-type=jwt",
             "--url=http://localhost:8080",
             "--mode=http",
             f"--http-port={port}",
@@ -415,6 +416,7 @@ class TestAmainHTTPMode:
             [
                 f"--url={fake_server_url}",
                 "--token=test-token",
+                "--auth-type=jwt",
                 "--mode=http",
                 f"--http-port={port}",
                 f"--cache-files={tmp_path / 'files.db'}",
@@ -477,22 +479,39 @@ class TestAmainSTDIOMode:
     @pytest.mark.asyncio
     async def test_amain_stdio_mode_subprocess(self, tmp_path: Path) -> None:
         """Test that STDIO mode works via subprocess."""
-        # Create a subprocess running in STDIO mode
+        # Isolate from any user-level auth.ini, then supply token+url via the
+        # env vars argclass actually reads (matches CLI: CONTREE_TOKEN / _URL).
+        # Using ``CONTREE_MCP_*`` here used to silently exit at the "no API
+        # token" check, leaving stdout empty and the JSON parse exploding.
         env = os.environ.copy()
-        env["CONTREE_MCP_TOKEN"] = "test-token"
-        env["CONTREE_MCP_URL"] = "http://localhost:9999"  # Won't actually connect
+        for key in (
+            "CONTREE_TOKEN",
+            "CONTREE_URL",
+            "CONTREE_PROJECT",
+            "CONTREE_PROFILE",
+        ):
+            env.pop(key, None)
+        env["CONTREE_HOME"] = str(tmp_path)
+        env["CONTREE_NO_UPDATE_CHECK"] = "1"
 
+        # ``tools/list`` and ``initialize`` responses include the full set of
+        # tool descriptions on a single JSON line. The default StreamReader
+        # cap (64 KiB) is below that envelope, so raise the buffer.
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "contree_mcp",
             "--mode=stdio",
+            "--token=test-token",
+            "--auth-type=jwt",
+            "--url=http://localhost:9999",
             f"--cache-files={tmp_path / 'files.db'}",
             f"--cache-general={tmp_path / 'cache.db'}",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=4 * 1024 * 1024,
         )
 
         try:
@@ -570,6 +589,7 @@ class TestAmainInvalidMode:
             [
                 f"--url={fake_server_url}",
                 "--token=test-token",
+                "--auth-type=jwt",
                 f"--cache-files={tmp_path / 'files.db'}",
                 f"--cache-general={tmp_path / 'cache.db'}",
             ]
