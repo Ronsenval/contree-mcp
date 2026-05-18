@@ -46,8 +46,8 @@ Tokens passed via environment variables may appear in process listings.
 
 | Option | Environment Variable | Default |
 |--------|---------------------|---------|
-| `--cache-files` | `CONTREE_MCP_CACHE_FILES` | `~/.cache/contree_mcp/files.db` |
-| `--cache-general` | `CONTREE_MCP_CACHE_GENERAL` | `~/.cache/contree_mcp/cache.db` |
+| `--cache-files` | `CONTREE_MCP_CACHE_FILES` | `$CONTREE_HOME/mcp/files.db` (typically `~/.config/contree/mcp/files.db`) |
+| `--cache-general` | `CONTREE_MCP_CACHE_GENERAL` | `$CONTREE_HOME/mcp/cache.db` (typically `~/.config/contree/mcp/cache.db`) |
 | `--cache-general-prune-days` | - | `60` |
 
 ## Client Configuration Examples

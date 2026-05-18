@@ -3,6 +3,13 @@ from pathlib import Path
 
 import argclass
 
+from .config import CONTREE_HOME
+
+# Co-locate MCP caches with auth.ini and the update-check state under
+# ``$CONTREE_HOME/mcp/`` so a single directory holds everything the MCP
+# server writes (and ``CONTREE_HOME`` can scope it for tests).
+MCP_HOME = CONTREE_HOME / "mcp"
+
 
 class ServerMode(str, Enum):
     STDIO = "stdio"
@@ -15,8 +22,8 @@ class HTTPGroup(argclass.Group):
 
 
 class Cache(argclass.Group):
-    files: Path = Path("~") / ".cache" / "contree_mcp" / "files.db"
-    general: Path = Path("~") / ".cache" / "contree_mcp" / "cache.db"
+    files: Path = MCP_HOME / "files.db"
+    general: Path = MCP_HOME / "cache.db"
     prune_days: int = argclass.Argument(
         default=60,
         help="Delete cached entries older than this many days",
