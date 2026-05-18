@@ -686,17 +686,39 @@ def generate_docs_html(
       <div class="setup-box">
         <h3><span class="icon">🔑</span> Authentication (Required First)</h3>
         <div class="tab-content active" style="display: block;">
-          <p>Create a config file to store your API token securely:</p>
-<pre>mkdir -p ~/.config/contree</pre>
-          <p>Add your credentials:</p>
-<pre>cat &gt; ~/.config/contree/mcp.ini &lt;&lt; 'EOF'
+          <p>
+            Recommended: install
+            <a href="https://docs.contree.dev/cli/tutorial/installation.html"
+               target="_blank" rel="noopener"><code>contree-cli</code></a>
+            and run <code>contree auth</code>. It writes
+            <code>~/.config/contree/auth.ini</code>, which this MCP server
+            reads &mdash; one login covers both tools.
+          </p>
+<pre>uv tool install contree-cli   # or: pip install contree-cli
+contree auth                  # interactive setup</pre>
+          <p>To write the file by hand instead:</p>
+<pre>mkdir -p ~/.config/contree
+cat &gt; ~/.config/contree/auth.ini &lt;&lt; 'EOF'
 [DEFAULT]
-url = https://contree.dev/
+profile = default
+
+[profile:default]
+type = iam
+url = https://api.tokenfactory.nebius.com/sandboxes
 token = your-token-here
-EOF</pre>
-          <p>Alternatively, use a custom config location:</p>
-<pre>export CONTREE_MCP_CONFIG="/path/to/custom/config.ini"</pre>
-          <p class="note">With token in config, MCP configs below don't need env vars.</p>
+project = your-nebius-project-id
+EOF
+chmod 600 ~/.config/contree/auth.ini</pre>
+          <p>For the JWT flow (<code>contree.dev</code>):</p>
+<pre>[profile:default]
+type = jwt
+url = https://contree.dev
+token = your-token-here</pre>
+          <p>Override the config directory with <code>CONTREE_HOME</code>,
+          or pick a non-default profile with <code>CONTREE_PROFILE</code> /
+          <code>--profile</code>.</p>
+          <p class="note">With credentials in <code>auth.ini</code>, the
+          MCP configs below don't need env vars.</p>
         </div>
       </div>
 
@@ -719,7 +741,7 @@ EOF</pre>
     }}
   }}
 }}</pre>
-          <p>To use a custom config path, add <code>env</code>:</p>
+          <p>To point at a custom config directory, add <code>env</code>:</p>
 <pre>{{
   "mcpServers": {{
     "contree": {{
@@ -727,7 +749,7 @@ EOF</pre>
       "command": "uvx",
       "args": ["contree-mcp"],
       "env": {{
-        "CONTREE_MCP_CONFIG": "/path/to/config.ini"
+        "CONTREE_HOME": "/path/to/contree-home"
       }}
     }}
   }}
@@ -764,11 +786,11 @@ EOF</pre>
 <pre>[mcp_servers.contree]
 command = "uvx"
 args = ["contree-mcp"]</pre>
-          <p>To use a custom config path, add <code>env</code>:</p>
+          <p>To point at a custom config directory, add <code>env</code>:</p>
 <pre>[mcp_servers.contree]
 command = "uvx"
 args = ["contree-mcp"]
-env = {{ CONTREE_MCP_CONFIG = "/path/to/config.ini" }}</pre>
+env = {{ CONTREE_HOME = "/path/to/contree-home" }}</pre>
           <p class="note">Use <code>mcp_servers</code> (underscore).</p>
         </div>
         <div class="tab-content" data-mode="http">
@@ -799,14 +821,14 @@ url = "http://localhost:{http_port}/mcp"</pre>
     }}
   }}
 }}</pre>
-          <p>To use a custom config path, add <code>environment</code>:</p>
+          <p>To point at a custom config directory, add <code>environment</code>:</p>
 <pre>{{
   "mcp": {{
     "contree": {{
       "type": "local",
       "command": ["uvx", "contree-mcp"],
       "environment": {{
-        "CONTREE_MCP_CONFIG": "/path/to/config.ini"
+        "CONTREE_HOME": "/path/to/contree-home"
       }},
       "enabled": true
     }}
