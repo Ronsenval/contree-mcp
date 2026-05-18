@@ -11,11 +11,13 @@ class TestParser:
     """Tests for Parser argument parsing."""
 
     def test_parser_default_values(self) -> None:
-        """Test that Parser has correct default values."""
+        """Token/url/project default to None — they are resolved from config later."""
         parser = Parser()
-        # Parse with just required token to get defaults for other fields
-        parser.parse_args(["--token=test"])
-        assert parser.url == "https://contree.dev"
+        parser.parse_args([])
+        assert parser.url is None
+        assert parser.token is None
+        assert parser.project is None
+        assert parser.profile is None
         assert parser.mode == ServerMode.STDIO
 
     def test_parser_with_args(self) -> None:
@@ -25,12 +27,16 @@ class TestParser:
             [
                 "--url=https://api.example.com",
                 "--token=secret-token",
+                "--project=proj-123",
+                "--profile=staging",
                 "--mode=http",
             ]
         )
 
         assert parser.url == "https://api.example.com"
         assert parser.token == "secret-token"
+        assert parser.project == "proj-123"
+        assert parser.profile == "staging"
         assert parser.mode == ServerMode.HTTP
 
     def test_parser_http_group(self) -> None:
@@ -38,7 +44,6 @@ class TestParser:
         parser = Parser()
         parser.parse_args(
             [
-                "--token=secret",
                 "--http-listen=0.0.0.0",
                 "--http-port=8000",
             ]
@@ -52,7 +57,6 @@ class TestParser:
         parser = Parser()
         parser.parse_args(
             [
-                "--token=secret",
                 "--cache-prune-days=30",
             ]
         )
@@ -74,14 +78,19 @@ class TestCLI:
         assert result.returncode == 0
         assert "usage:" in result.stdout.lower() or "--help" in result.stdout
 
-    def test_cli_missing_required_token(self) -> None:
-        """Test that missing required --token produces error."""
-        # Clear env vars that could provide the token and config file
+    def test_cli_missing_token_fails(self, tmp_path) -> None:
+        """No token anywhere -> SystemExit with helpful message."""
         env = os.environ.copy()
-        env.pop("CONTREE_MCP_TOKEN", None)
-        env.pop("CONTREE_TOKEN", None)
-        # Point to non-existent config file to ensure no token from config
-        env["CONTREE_MCP_CONFIG"] = "/nonexistent/config.ini"
+        for key in (
+            "CONTREE_TOKEN",
+            "CONTREE_URL",
+            "CONTREE_PROJECT",
+            "CONTREE_PROFILE",
+            "CONTREE_MCP_TOKEN",
+        ):
+            env.pop(key, None)
+        # Point CONTREE_HOME to an empty dir so no profile is loaded.
+        env["CONTREE_HOME"] = str(tmp_path)
 
         result = subprocess.run(
             [sys.executable, "-m", "contree_mcp"],
@@ -90,5 +99,5 @@ class TestCLI:
             env=env,
         )
 
-        # Should fail because --token is required
         assert result.returncode != 0
+        assert "token" in result.stderr.lower()

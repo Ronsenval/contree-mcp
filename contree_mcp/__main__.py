@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import sys
 
 from contree_mcp.arguments import Parser
@@ -8,10 +7,7 @@ from contree_mcp.server import amain
 
 
 def main() -> None:
-    parser = Parser(
-        config_files=[os.getenv("CONTREE_MCP_CONFIG", "~/.config/contree/mcp.ini")],
-        auto_env_var_prefix="CONTREE_MCP_",
-    )
+    parser = Parser()
     parser.parse_args()
 
     logging.basicConfig(level=parser.log_level, format="[%(levelname)s] %(message)s", stream=sys.stderr)

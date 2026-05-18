@@ -137,11 +137,13 @@ class ContreeClient:
         base_url: str,
         token: str,
         cache: Cache,
+        project: str | None = None,
         timeout: float = 30.0,
         poll_interval: float = 1.0,
     ):
         self.base_url = base_url.rstrip("/") + "/v1"
         self.token = token
+        self.project = project
         self.timeout = httpx.Timeout(timeout)
         self._cache = cache
 
@@ -159,6 +161,8 @@ class ContreeClient:
     def headers(self) -> Mapping[str, str]:
         hdrs = dict(self.HEADERS)
         hdrs["Authorization"] = f"Bearer {self.token}"
+        if self.project:
+            hdrs["Project"] = self.project
         return MappingProxyType(hdrs)
 
     @cached_property

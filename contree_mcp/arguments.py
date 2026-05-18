@@ -24,8 +24,27 @@ class Cache(argclass.Group):
 
 
 class Parser(argclass.Parser):
-    url: str = argclass.Argument(default="https://contree.dev", help="Contree API base URL")
-    token: str = argclass.Argument(secret=True, help="Contree API authentication token", required=True)
+    profile: str | None = argclass.Argument(
+        default=None,
+        env_var="CONTREE_PROFILE",
+        help="Config profile to use (default: active profile from config file)",
+    )
+    url: str | None = argclass.Argument(
+        default=None,
+        env_var="CONTREE_URL",
+        help="Contree API base URL (overrides config and env)",
+    )
+    token: str | None = argclass.Argument(
+        default=None,
+        secret=True,
+        env_var="CONTREE_TOKEN",
+        help="Contree API authentication token (overrides config and env)",
+    )
+    project: str | None = argclass.Argument(
+        default=None,
+        env_var="CONTREE_PROJECT",
+        help="Project ID for IAM authentication (overrides config and env)",
+    )
     mode: ServerMode = argclass.EnumArgument(
         ServerMode, default=ServerMode.STDIO, lowercase=True, help="Server transport mode"
     )

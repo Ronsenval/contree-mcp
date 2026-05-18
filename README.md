@@ -24,11 +24,41 @@ Contree is in **Early Access**. To get an API token, fill out the request form a
 
 ### 2. Create Config File
 
-Store credentials in `~/.config/contree/mcp.ini`:
+`contree-mcp` reads the same `auth.ini` that
+[`contree-cli`](https://docs.contree.dev/cli/tutorial/installation.html)
+writes, so a single login covers all contree-related tools.
+
+**Recommended:** install `contree-cli` (see
+[installation guide](https://docs.contree.dev/cli/tutorial/installation.html))
+and manage credentials with it rather than editing the file by hand:
+
+```bash
+contree auth --help  # add, switch, list, remove profiles
+```
+
+Default location: `$XDG_CONFIG_HOME/contree/auth.ini` (typically
+`~/.config/contree/auth.ini`). Override the directory with
+`CONTREE_HOME`.
+
+If you really need to write it by hand:
 
 ```ini
 [DEFAULT]
-url = https://contree.dev/
+profile = default
+
+[profile:default]
+type = iam
+url = https://api.tokenfactory.nebius.com/sandboxes
+token = <TOKEN HERE>
+project = <NEBIUS PROJECT ID>
+```
+
+For the legacy JWT flow (`contree.dev`), use:
+
+```ini
+[profile:default]
+type = jwt
+url = https://contree.dev
 token = <TOKEN HERE>
 ```
 
@@ -62,7 +92,7 @@ Add to config file:
 {"mcpServers": {"contree": {"command": "uvx", "args": ["contree-mcp"]}}}
 ```
 
-> **Note:** You can alternatively pass credentials via environment variables (`CONTREE_MCP_TOKEN`, `CONTREE_MCP_URL`) in your MCP client config, but this is not recommended as tokens may appear in process listings.
+> **Note:** You can alternatively pass credentials via environment variables (`CONTREE_TOKEN`, `CONTREE_URL`, `CONTREE_PROJECT`, `CONTREE_PROFILE`) in your MCP client config, but this is not recommended as tokens may appear in process listings.
 
 ## Manual Installation
 
@@ -73,11 +103,14 @@ uv pip install contree-mcp
 # Using pip
 pip install contree-mcp
 
-# Run manually
-contree-mcp --token YOUR_TOKEN
+# Run manually (IAM auth)
+contree-mcp --token YOUR_TOKEN --project YOUR_PROJECT
+
+# Or pick a profile from ~/.config/contree/auth.ini
+contree-mcp --profile staging
 
 # HTTP mode (for network access)
-contree-mcp --mode http --http-port 9452 --token YOUR_TOKEN
+contree-mcp --mode http --http-port 9452 --profile default
 
 # Visit http://localhost:9452/ for interactive documentation with
 # setup guides, tool reference, and best practices.
@@ -111,12 +144,17 @@ pip install --break-system-packages contree-mcp
 
 | Argument | Environment Variable | Default |
 |----------|---------------------|---------|
-| - | `CONTREE_MCP_CONFIG` | `~/.config/contree/mcp.ini` |
-| `--token` | `CONTREE_MCP_TOKEN` | (required) |
-| `--url` | `CONTREE_MCP_URL` | `https://contree.dev/` |
-| `--mode` | `CONTREE_MCP_MODE` | `stdio` |
-| `--http-port` | `CONTREE_MCP_HTTP_PORT` | `9452` |
-| `--log-level` | `CONTREE_MCP_LOG_LEVEL` | `warning` |
+| - | `CONTREE_HOME` | `$XDG_CONFIG_HOME/contree` (`~/.config/contree`) |
+| `--profile` | `CONTREE_PROFILE` | active profile from config |
+| `--token` | `CONTREE_TOKEN` | from config |
+| `--url` | `CONTREE_URL` | from config (IAM default: `https://api.tokenfactory.nebius.com/sandboxes`) |
+| `--project` | `CONTREE_PROJECT` | from config (required for IAM auth) |
+| `--mode` | - | `stdio` |
+| `--http-port` | - | `9452` |
+| `--log-level` | - | `warning` |
+
+Resolution priority for credentials: **CLI flag > environment variable >
+profile in `config.ini`**.
 
 ## Available Tools
 
