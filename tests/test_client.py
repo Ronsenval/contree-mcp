@@ -16,6 +16,7 @@ from contree_mcp.backend_types import (
 )
 from contree_mcp.cache import Cache
 from contree_mcp.client import ContreeClient, ContreeError
+from contree_mcp.config import AuthType, ConfigProfile
 from tests.conftest import (
     FakeResponse,
     FakeResponses,
@@ -72,6 +73,114 @@ class TestContreeClientInit:
         """Test that /v1 is added to base_url."""
         client = ContreeClient("https://api.example.com", "token", cache=tmp_cache)
         assert client.base_url == "https://api.example.com/v1"
+
+
+class TestContreeClientAuthType:
+    """Wire-format coverage for JWT vs IAM auth modes."""
+
+    @pytest.mark.asyncio
+    async def test_jwt_headers_no_project(self, tmp_cache: Cache) -> None:
+        client = ContreeClient(
+            "https://contree.dev", "jwt-token", cache=tmp_cache,
+            auth_type=AuthType.JWT,
+        )
+        assert client.headers["Authorization"] == "Bearer jwt-token"
+        assert "Project" not in client.headers
+
+    @pytest.mark.asyncio
+    async def test_jwt_drops_project_even_if_supplied(self, tmp_cache: Cache) -> None:
+        """A JWT client built with a stray project must NOT emit the Project header."""
+        client = ContreeClient(
+            "https://contree.dev", "jwt-token", cache=tmp_cache,
+            project="ignored-on-jwt",
+            auth_type=AuthType.JWT,
+        )
+        assert "Project" not in client.headers
+
+    @pytest.mark.asyncio
+    async def test_iam_emits_project_header(self, tmp_cache: Cache) -> None:
+        client = ContreeClient(
+            "https://api.tokenfactory.nebius.com/sandboxes",
+            "iam-token",
+            cache=tmp_cache,
+            project="proj-123",
+            auth_type=AuthType.IAM,
+        )
+        assert client.headers["Authorization"] == "Bearer iam-token"
+        assert client.headers["Project"] == "proj-123"
+
+    @pytest.mark.asyncio
+    async def test_iam_requires_project(self, tmp_cache: Cache) -> None:
+        with pytest.raises(ValueError, match="IAM auth requires a project ID"):
+            ContreeClient(
+                "https://api.tokenfactory.nebius.com/sandboxes",
+                "iam-token",
+                cache=tmp_cache,
+                auth_type=AuthType.IAM,
+            )
+
+    @pytest.mark.asyncio
+    async def test_from_profile_jwt(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="legacy",
+            url="https://contree.dev",
+            token="jwt-token",
+            auth_type=AuthType.JWT,
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        assert client.auth_type == AuthType.JWT
+        assert "Project" not in client.headers
+        assert client.headers["Authorization"] == "Bearer jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_from_profile_iam(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="prod",
+            url="https://api.tokenfactory.nebius.com/sandboxes",
+            token="iam-token",
+            auth_type=AuthType.IAM,
+            project="proj-xyz",
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        assert client.auth_type == AuthType.IAM
+        assert client.headers["Project"] == "proj-xyz"
+
+    @pytest.mark.asyncio
+    async def test_from_profile_rejects_missing_token(self, tmp_cache: Cache) -> None:
+        profile = ConfigProfile(
+            name="empty",
+            url="https://contree.dev",
+            token=None,
+            auth_type=AuthType.JWT,
+        )
+        with pytest.raises(ValueError, match="has no token"):
+            ContreeClient.from_profile(profile, cache=tmp_cache)
+
+    @pytest.mark.asyncio
+    async def test_from_profile_rejects_jwt_without_url(self, tmp_cache: Cache) -> None:
+        """JWT has no default URL — the legacy host must be supplied."""
+        profile = ConfigProfile(
+            name="bare-jwt",
+            url="",
+            token="t",
+            auth_type=AuthType.JWT,
+        )
+        with pytest.raises(ValueError, match="no url"):
+            ContreeClient.from_profile(profile, cache=tmp_cache)
+
+    @pytest.mark.asyncio
+    async def test_from_profile_iam_uses_default_url(self, tmp_cache: Cache) -> None:
+        """IAM profile without a URL falls back to ContreeClient.DEFAULT_URLS."""
+        profile = ConfigProfile(
+            name="bare-iam",
+            url="",
+            token="t",
+            auth_type=AuthType.IAM,
+            project="proj",
+        )
+        client = ContreeClient.from_profile(profile, cache=tmp_cache)
+        # The client appends ``/v1`` to whatever base URL it receives.
+        assert client.base_url == ContreeClient.DEFAULT_URLS[AuthType.IAM] + "/v1"
 
 
 class TestListImages(TestCase):

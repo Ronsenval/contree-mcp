@@ -102,6 +102,7 @@ def test_parser(tmp_path: Path, mcp_server_socket: socket.socket) -> Parser:
     return Parser().parse_args(
         [
             "--token=test-token",
+            "--auth-type=jwt",
             "--url=http://localhost:8080",
             "--mode=http",
             f"--http-port={port}",
@@ -415,6 +416,7 @@ class TestAmainHTTPMode:
             [
                 f"--url={fake_server_url}",
                 "--token=test-token",
+                "--auth-type=jwt",
                 "--mode=http",
                 f"--http-port={port}",
                 f"--cache-files={tmp_path / 'files.db'}",
@@ -501,6 +503,7 @@ class TestAmainSTDIOMode:
             "contree_mcp",
             "--mode=stdio",
             "--token=test-token",
+            "--auth-type=jwt",
             "--url=http://localhost:9999",
             f"--cache-files={tmp_path / 'files.db'}",
             f"--cache-general={tmp_path / 'cache.db'}",
@@ -586,6 +589,7 @@ class TestAmainInvalidMode:
             [
                 f"--url={fake_server_url}",
                 "--token=test-token",
+                "--auth-type=jwt",
                 f"--cache-files={tmp_path / 'files.db'}",
                 f"--cache-general={tmp_path / 'cache.db'}",
             ]

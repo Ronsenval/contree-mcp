@@ -31,6 +31,7 @@ async def amain(parser: Parser) -> None:
         token=parser.token,
         url=parser.url,
         project=parser.project,
+        auth_type=parser.auth_type,
     )
 
     if not profile.token:
@@ -50,7 +51,19 @@ async def amain(parser: Parser) -> None:
             "--project, or run `contree auth`."
         )
 
-    log.debug("Using profile: %r", profile)
+    # Name == ``"env"`` is the synthetic profile ``Config.resolve()``
+    # returns when an external token source bypasses the file (see
+    # ``contree_mcp.config.Config.resolve``). Surface this at INFO so
+    # operators can confirm at a glance which credential set is live.
+    source = "explicit env/CLI override" if profile.name == "env" else f"auth.ini profile {profile.name!r}"
+    log.info(
+        "Using credentials from %s: auth=%s url=%s project=%s",
+        source,
+        profile.auth_type,
+        profile.url,
+        profile.project or "-",
+    )
+    log.debug("Resolved profile: %r", profile)
 
     async with AsyncExitStack() as stack:
         # Initialize all dependencies
@@ -62,12 +75,7 @@ async def amain(parser: Parser) -> None:
             )
         )
         client = await stack.enter_async_context(
-            ContreeClient(
-                base_url=profile.url,
-                token=profile.token,
-                project=profile.project,
-                cache=general_cache,
-            )
+            ContreeClient.from_profile(profile, cache=general_cache),
         )
 
         CLIENT.set(client)

@@ -1,9 +1,10 @@
+import argparse
 import asyncio
 import logging
 import sys
 from contextlib import suppress
 
-from contree_mcp.arguments import Parser
+from contree_mcp.arguments import PARSER_DESCRIPTION, PARSER_EPILOG, Parser
 from contree_mcp.server import amain
 from contree_mcp.update_check import UpdateChecker
 
@@ -11,7 +12,11 @@ log = logging.getLogger(__name__)
 
 
 def main() -> None:
-    parser = Parser()
+    parser = Parser(
+        description=PARSER_DESCRIPTION,
+        epilog=PARSER_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.parse_args()
 
     logging.basicConfig(level=parser.log_level, format="[%(levelname)s] %(message)s", stream=sys.stderr)

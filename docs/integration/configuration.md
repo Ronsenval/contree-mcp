@@ -4,6 +4,20 @@ Detailed configuration options for Contree MCP.
 
 ## Authentication
 
+The MCP server supports both auth modes the Contree API exposes — the
+same two `contree-cli` recognises:
+
+- **IAM (recommended).** Token + Project header. Sends
+  `Authorization: Bearer <iam-token>` and `Project: <project-id>`.
+  Default URL: `https://api.tokenfactory.nebius.com/sandboxes`. Use this
+  for new deployments; the standard `NEBIUS_API_KEY` /
+  `NEBIUS_AI_PROJECT` env vars are honoured.
+- **JWT (legacy).** Token only. Sends `Authorization: Bearer <jwt-token>`.
+  Used by the `contree.dev` PoC deployment. No project required.
+
+A profile's `type = iam | jwt` line picks the scheme; the client class
+that issues backend requests is wired accordingly at startup.
+
 ### Profile File (Recommended)
 
 `contree-mcp` reads the same profile file that
@@ -54,7 +68,42 @@ export CONTREE_URL="https://api.tokenfactory.nebius.com/sandboxes"
 export CONTREE_PROJECT="your-nebius-project-id"
 ```
 
-Resolution priority is **CLI flag > env var > stored profile**.
+The standard Nebius IAM credentials are recognised too:
+
+```bash
+export NEBIUS_API_KEY="your-iam-key"
+export NEBIUS_AI_PROJECT="your-nebius-project-id"
+```
+
+#### Precedence rule (important)
+
+If a token is supplied externally — via `--token`, `CONTREE_TOKEN`,
+**or** `NEBIUS_API_KEY` — the profile file is **ignored entirely**.
+`url`, `project`, and `auth_type` then come from explicit CLI flags,
+the matching env vars (`CONTREE_URL` / `CONTREE_PROJECT` /
+`NEBIUS_AI_PROJECT`), or the IAM defaults. The resolved profile gets
+the synthetic name `env` to make this visible in logs.
+
+Two consequences worth knowing:
+
+- Setting `CONTREE_TOKEN` and `CONTREE_PROJECT` in your shell does NOT
+  mix-and-match with a stored profile. The file is skipped.
+- `auth_type` is **JWT** when only a token is supplied (no project),
+  and **IAM** when both token and project are present. The legacy
+  `https://contree.dev` deployment uses JWT; the IAM default is
+  `https://api.tokenfactory.nebius.com/sandboxes`.
+
+Token resolution order within the "external" path:
+
+```
+--token  >  CONTREE_TOKEN  >  NEBIUS_API_KEY
+--project  >  CONTREE_PROJECT  >  NEBIUS_AI_PROJECT
+--url      >  CONTREE_URL      >  (IAM default if IAM; "" if JWT)
+```
+
+If no external token is set, the active profile from `auth.ini` is
+used as-is. `--profile` / `CONTREE_PROFILE` selects which profile.
+
 Tokens passed via env may appear in process listings — prefer the
 profile file for routine use.
 

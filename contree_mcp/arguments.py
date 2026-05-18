@@ -4,7 +4,7 @@ from pathlib import Path
 import argclass
 
 from .client import MCP_USER_AGENT
-from .config import CONTREE_HOME
+from .config import CONTREE_HOME, AuthType
 
 # Co-locate MCP caches with auth.ini and the update-check state under
 # ``$CONTREE_HOME/mcp/`` so a single directory holds everything the MCP
@@ -31,27 +31,74 @@ class Cache(argclass.Group):
     )
 
 
+PARSER_DESCRIPTION = (
+    "Run the Contree MCP server — sandboxed container execution exposed\n"
+    "as a Model Context Protocol surface for AI agents."
+)
+
+PARSER_EPILOG = """\
+IAM credentials live in $CONTREE_HOME/auth.ini (one [profile:<name>]
+section per account). Active profile: --profile > $CONTREE_PROFILE >
+[DEFAULT] profile. Profile fields default URL to the Nebius IAM
+endpoint when omitted.
+
+Precedence: CLI flags > env vars > active profile. Passing --token
+(or CONTREE_TOKEN / NEBIUS_API_KEY) bypasses the profile entirely;
+URL and project then come from CLI/env/defaults. To layer per-field
+overrides on top of a stored profile, leave --token unset.
+
+Register a profile with `contree auth` from contree-cli:
+  uv tool install contree-cli && contree auth
+  https://docs.contree.dev/cli/tutorial/installation.html
+"""
+
+
 class Parser(argclass.Parser):
+    __doc__ = PARSER_DESCRIPTION
+
     profile: str | None = argclass.Argument(
         default=None,
         env_var="CONTREE_PROFILE",
-        help="Config profile to use (default: active profile from config file)",
+        help=(
+            "Profile name to load from auth.ini. Defaults to the file's "
+            "[DEFAULT] profile. Ignored when --token is supplied."
+        ),
+    )
+    auth_type: AuthType = argclass.EnumArgument(
+        AuthType,
+        default=AuthType.IAM,
+        lowercase=True,
+        help=(
+            "Auth scheme. Required; defaults to iam. Use jwt for the legacy "
+            "contree.dev deployment (token only, --url required). For "
+            "profile-based runs the profile's `type` line takes precedence."
+        ),
     )
     url: str | None = argclass.Argument(
         default=None,
         env_var="CONTREE_URL",
-        help="Contree API base URL (overrides config and env)",
+        help=(
+            "Contree API base URL. Required for JWT (e.g. https://contree.dev); "
+            "for IAM defaults to https://api.tokenfactory.nebius.com/sandboxes."
+        ),
     )
     token: str | None = argclass.Argument(
         default=None,
         secret=True,
         env_var="CONTREE_TOKEN",
-        help="Contree API authentication token (overrides config and env)",
+        help=(
+            "Bearer token. Pair with --project for IAM auth, omit --project "
+            "for legacy JWT. Also read from NEBIUS_API_KEY. Setting any of "
+            "these bypasses the profile file."
+        ),
     )
     project: str | None = argclass.Argument(
         default=None,
         env_var="CONTREE_PROJECT",
-        help="Project ID for IAM authentication (overrides config and env)",
+        help=(
+            "Nebius project ID. Presence selects IAM auth; absence means JWT. "
+            "Also read from NEBIUS_AI_PROJECT."
+        ),
     )
     mode: ServerMode = argclass.EnumArgument(
         ServerMode, default=ServerMode.STDIO, lowercase=True, help="Server transport mode"
@@ -62,7 +109,7 @@ class Parser(argclass.Parser):
         "--version",
         action=argclass.Actions.VERSION,
         version=MCP_USER_AGENT,
-        help="Print the User-Agent string this server sends and exit",
+        help="Print the MCP version, some OS and platform info and exit",
     )
 
     log_level: int = argclass.LogLevel

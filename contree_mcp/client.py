@@ -42,6 +42,7 @@ from .backend_types import (
     WhoAmIResponse,
 )
 from .cache import Cache
+from .config import AuthType, Config, ConfigProfile
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -129,7 +130,31 @@ class ContreeError(Exception):
 
 
 class ContreeClient:
+    """HTTP client for the Contree backend.
+
+    Supports the two auth modes defined by the API:
+
+    - ``AuthType.JWT`` — legacy self-issued bearer token (e.g. the
+      ``contree.dev`` deployment). Sends ``Authorization: Bearer <token>``.
+    - ``AuthType.IAM`` — Nebius IAM token plus a project ID. Sends
+      ``Authorization: Bearer <token>`` and ``Project: <project>``.
+
+    The defaults make a JWT client (token only) the cheapest construction
+    so existing call sites keep working. Use :meth:`from_profile` to
+    build the right client from a resolved :class:`ConfigProfile`.
+    """
+
     POLL_CONCURRENCY = 10
+
+    # Default base URL per auth scheme. Mirrors
+    # ``contree_cli.client.ContreeIAMClient.DEFAULT_URL`` / ``ContreeJWTClient``
+    # (which has no default — the legacy ``contree.dev`` URL must be
+    # supplied explicitly). The IAM value is sourced from ``Config`` so
+    # the resolver and the client never drift.
+    DEFAULT_URLS: Mapping[AuthType, str] = MappingProxyType({
+        AuthType.IAM: Config.DEFAULT_IAM_URL,
+        AuthType.JWT: "",
+    })
 
     HEADERS = (
         ("Content-Type", "application/json"),
@@ -144,16 +169,59 @@ class ContreeClient:
         project: str | None = None,
         timeout: float = 30.0,
         poll_interval: float = 1.0,
+        auth_type: AuthType = AuthType.JWT,
     ):
+        if auth_type == AuthType.IAM and not project:
+            raise ValueError("IAM auth requires a project ID")
+        if auth_type == AuthType.JWT and project:
+            log.debug("JWT client constructed with a project — Project header will not be sent")
         self.base_url = base_url.rstrip("/") + "/v1"
         self.token = token
         self.project = project
+        self.auth_type = auth_type
         self.timeout = httpx.Timeout(timeout)
         self._cache = cache
 
         self._poll_interval = poll_interval
         self._poll_semaphore = asyncio.Semaphore(self.POLL_CONCURRENCY)
         self._tracked_operations: dict[str, asyncio.Task[OperationResponse]] = {}
+
+    @classmethod
+    def from_profile(
+        cls,
+        profile: ConfigProfile,
+        cache: Cache,
+        timeout: float = 30.0,
+        poll_interval: float = 1.0,
+    ) -> Self:
+        """Build a client from a resolved :class:`ConfigProfile`.
+
+        Mirrors ``contree_cli.client.client_from_profile``: validates
+        token / project / url against the profile's ``auth_type`` and
+        produces a client wired for the correct auth scheme.
+
+        URL fallback follows the CLI: IAM falls back to
+        :attr:`DEFAULT_URLS` (Nebius IAM endpoint); JWT must have an
+        explicit URL because the legacy ``contree.dev`` host can't be
+        inferred.
+        """
+        if not profile.token:
+            raise ValueError(f"profile {profile.name!r} has no token")
+        base_url = profile.url or cls.DEFAULT_URLS[profile.auth_type]
+        if not base_url:
+            raise ValueError(
+                f"profile {profile.name!r} ({profile.auth_type}) has no url and "
+                f"this auth scheme has no default — pass --url",
+            )
+        return cls(
+            base_url=base_url,
+            token=profile.token,
+            cache=cache,
+            project=profile.project,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            auth_type=profile.auth_type,
+        )
 
     @property
     def cache(self) -> Cache:
@@ -165,7 +233,10 @@ class ContreeClient:
     def headers(self) -> Mapping[str, str]:
         hdrs = dict(self.HEADERS)
         hdrs["Authorization"] = f"Bearer {self.token}"
-        if self.project:
+        # IAM requires the Project header; JWT must not send it even if
+        # ``project`` happens to be set (the legacy backend would reject).
+        if self.auth_type == AuthType.IAM:
+            assert self.project, "IAM client missing project — should have been caught in __init__"
             hdrs["Project"] = self.project
         return MappingProxyType(hdrs)
 

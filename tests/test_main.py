@@ -81,12 +81,16 @@ class TestCLI:
     def test_cli_missing_token_fails(self, tmp_path) -> None:
         """No token anywhere -> SystemExit with helpful message."""
         env = os.environ.copy()
+        # Strip every variable the resolver treats as an explicit-token
+        # source — otherwise host-level NEBIUS_API_KEY (etc.) leaks in
+        # and silences the "no token" path.
         for key in (
             "CONTREE_TOKEN",
             "CONTREE_URL",
             "CONTREE_PROJECT",
             "CONTREE_PROFILE",
-            "CONTREE_MCP_TOKEN",
+            "NEBIUS_API_KEY",
+            "NEBIUS_AI_PROJECT",
         ):
             env.pop(key, None)
         # Point CONTREE_HOME to an empty dir so no profile is loaded.
