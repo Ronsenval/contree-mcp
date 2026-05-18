@@ -98,17 +98,32 @@ class FileResponse(BaseModel):
     """Response from file endpoints.
 
     API handlers:
-    - POST /files -> FileResponse (uuid, sha256, size required)
-    - GET /files/{sha256} -> File (uuid, sha256, size, created_at, updated_at required)
+    - POST /files -> FileResponse (uuid, sha256, size)
+    - GET /files/{sha256} -> FileResponse (uuid, sha256, size, created_at, updated_at)
 
-    Timestamps are only set on GET; POST omits them.
+    Only ``uuid`` is load-bearing for client logic; every other field is
+    optional so additive or renamed fields on the backend do not break parsing.
+    The ``unwrap_envelopes`` validator also accepts list-shaped responses
+    (``{"files": [item, ...]}``) and single-key envelopes (``{"file": item}``)
+    so the client survives backend response-shape drift.
     """
 
     uuid: str = Field(description="File UUID")
-    sha256: str = Field(description="SHA256 hash of file content")
+    sha256: str = Field(default="", description="SHA256 hash of file content")
     size: int = Field(default=-1, description="File size in bytes; -1 if unknown")
     created_at: str | None = Field(default=None, description="First-upload timestamp (ISO 8601)")
     updated_at: str | None = Field(default=None, description="Last-upload timestamp (ISO 8601)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_envelopes(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if isinstance(data.get("files"), list):
+                files = data["files"]
+                return files[0] if files else {"uuid": ""}
+            if isinstance(data.get("file"), dict):
+                return data["file"]
+        return data
 
 
 class InstanceSpawnResponse(BaseModel):

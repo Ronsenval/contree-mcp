@@ -495,25 +495,10 @@ class ContreeClient:
     async def check_file_exists_by_hash(self, sha256: str) -> bool:
         """Check if file exists on server by SHA256 hash. Always hits server (no cache)."""
         try:
-            status = await self._head_request("/files", params={"sha256": sha256})
+            status = await self._head_request(f"/files/{sha256}")
             return status == 200
         except Exception:
             return False
-
-    async def check_file_exists(self, file_uuid: str) -> bool:
-        """Check if an uploaded file exists by UUID. File existence is immutable - no TTL needed."""
-        entry = await self.cache.get("file_exists_by_uuid", file_uuid)
-        if entry:
-            return bool(entry.data["exists"])
-
-        try:
-            status = await self._head_request("/files", params={"uuid": file_uuid})
-            exists = status == 200
-        except Exception:
-            exists = False
-
-        await self.cache.put("file_exists_by_uuid", file_uuid, {"exists": exists})
-        return exists
 
     async def get_file_by_hash(self, sha256: str) -> FileResponse | None:
         """Get file UUID by SHA256 hash. Hash-based lookup is immutable - no TTL needed."""
@@ -524,7 +509,7 @@ class ContreeClient:
             return FileResponse.model_validate(entry.data)
 
         try:
-            response = await self._request("GET", "/files", model=FileResponse, params={"sha256": sha256})
+            response = await self._request("GET", f"/files/{sha256}", model=FileResponse)
             await self.cache.put("file_by_hash", sha256, response.body.model_dump())
             return response.body
         except ContreeError as e:

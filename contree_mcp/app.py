@@ -1,102 +1,116 @@
-"""
-## MANDATORY WORKFLOW
+"""# Contree MCP
 
-Every task MUST follow this sequence:
+Contree MCP exposes sandboxed code execution as a set of stateless tool
+calls. Every `run` spawns an isolated microVM; every non-disposable
+`run` produces a new immutable image UUID. There are no sessions —
+image lineage is the durable state, tracked through `result_image`
+UUIDs and `set_tag`.
 
-### Step 1: CHECK for Prepared Environment
-```
-list_images(tag_prefix="common/")
-```
-Search for existing prepared images before creating new ones.
+**FIRST OF ALL READ THE GUIDES.** When anything below is unclear, or
+before retrying after a failure, fetch the relevant section:
 
-### Step 2: PREPARE Environment (if not found)
-```
-import_image(registry_url="docker://python:3.11-slim")
-run(command="pip install ...", image="<uuid>", disposable=false)
-set_tag(image_uuid="<result>", tag="common/python-ml/python:3.11-slim")
-```
-Build and TAG prepared images for reuse. CRITICAL: Use `disposable=false` to save state.
+    get_guide(section="workflow" | "reference" | "quickstart" |
+                       "state" | "async" | "tagging" | "errors")
 
-### Step 3: EXECUTE Task
-```
-run(command="...", image="tag:common/python-ml/python:3.11-slim")
-```
-Use tagged image for efficient execution.
+or read the matching resource URI: `contree://guide/<section>`.
 
----
+## Quick start
 
-## Tagging Convention
+1. Search before you build. Always check the existing pool first:
+       list_images(tag_prefix="common/")
+   Do NOT assume `tag:python:3.11` exists — pick from the actual list.
+2. Inspect (free, no VM):
+       list_files(image="<uuid-or-tag>", path="/etc")
+       read_file(image="<uuid-or-tag>", path="/etc/os-release")
+3. Stage local files when needed:
+       rsync(source="/path/to/project", destination="/app")  -> directory_state_id
+       upload(path="/path/to/file")                          -> file uuid
+4. Execute in small steps, one mutating step per `run`. Pass
+   `disposable=false` to keep the result image:
+       run(command="apt-get install -y curl",
+           image="<uuid>", disposable=false)
+5. Tag useful results immediately:
+       set_tag(image_uuid="<result>",
+               tag="common/python-ml/python:3.11-slim")
 
-```
-{scope}/{purpose}/{base}:{tag}
-```
+## Non-negotiable rules
 
-| Component | Description | Examples |
-|-----------|-------------|----------|
-| `{scope}` | `common` or project name | `common`, `myproject` |
-| `{purpose}` | What was added/configured | `rust-toolchain`, `python-ml`, `web-deps` |
-| `{base}:{tag}` | Original base image | `ubuntu:noble`, `python:3.11-slim` |
+- Always search before you build. `list_images(tag_prefix=...)` is free.
+- One mutating step per `run`. Each `run(disposable=false)` is one
+  history entry; chained `&&` lines collapse into one and you lose
+  granular rollback.
+- `disposable=true` is the default (it discards changes). Use it for
+  read-only checks and exit-code probes; switch to `disposable=false`
+  the moment you want to keep the result. (CLI users: this is the
+  opposite of `contree run`'s default.)
+- Prefer `list_files` / `read_file` over `run("ls ...")` /
+  `run("cat ...")` — they're free and avoid spawning a microVM.
+- Local files are NOT visible in the sandbox unless attached via
+  `rsync` (directory) or `upload` (single file).
+- Tag images you intend to reuse. Untagged images are only reachable
+  by UUID and easily lost.
+- For env vars that must outlive the run (PATH after rustup / nvm /
+  pyenv), set `preserve_env=true` on the `run` that installs them.
 
-**Examples:**
-- `common/rust-toolchain/ubuntu:noble` - Ubuntu with Rust
-- `common/python-ml/python:3.11-slim` - Python with ML libraries
-- `myproject/dev-env/python:3.11-slim` - Project-specific setup
+## Command map
 
----
+| Tool | Purpose |
+|------|---------|
+| `run` | Execute a command in an isolated microVM |
+| `import_image` | Pull an OCI image from a registry |
+| `list_images` | List images; filter by `tag_prefix` |
+| `get_image` | Read image metadata |
+| `set_tag` | Add or remove a tag |
+| `rsync` | Stage a local directory tree |
+| `upload` | Stage a single local file |
+| `download` | Pull a file out of an image |
+| `list_files` / `read_file` | Inspect an image without a VM |
+| `get_operation` / `list_operations` / `wait_operations` / `cancel_operation` | Async operation management |
+| `whoami` | Token introspection (permissions, limits) |
+| `registry_token_obtain` / `registry_auth` | One-time private-registry setup |
+| `get_guide` | Read a section of this guide |
 
-## NEVER DO THESE
+## State and lineage
 
-| Anti-pattern | Consequence | Correct approach |
-|--------------|-------------|------------------|
-| Import without checking | Wastes 10s-30min on duplicate imports | `list_images(tag_prefix="...")` first |
-| Skip tagging prepared images | Rebuilds from scratch next time | `set_tag()` after installing deps |
-| Chain commands in one run | Cannot rollback individual steps | One step per `run` |
-| Use `disposable=true` for installs | Loses all installed packages | `disposable=false` for setup |
+There are no sessions. Image UUIDs are the durable state:
 
----
+- Each `run(disposable=false)` returns a new `result_image` UUID. Feed
+  it to the next `run` as `image` to chain.
+- "Rollback" = reuse a prior UUID. Old UUIDs are immutable.
+- "Branch" = feed an earlier UUID into a new `run` with different inputs.
+- Untagged UUIDs are eligible for project-scoped garbage collection.
+  Tag what you want to keep.
 
-## Tool Cost Reference
+Full details: `contree://guide/state`.
 
-| Tool | Cost | Notes |
-|------|------|-------|
-| `run` | VM (~2-5s) | Command execution |
-| `import_image` | VM (~10-30s) | Image pull from registry |
-| `rsync`, `upload`, `download` | Free | File transfer operations |
-| `list_images`, `get_image`, `set_tag` | Free | Image metadata |
-| `list_files`, `read_file` | Free | Inspect container filesystem |
-| `get_operation`, `list_operations`, `wait_operations`, `cancel_operation` | Free | Async management |
-| `get_guide` | Free | Access documentation |
+## Detached operations
 
-**Cost Optimization:** Use `list_files`/`read_file` instead of `run("ls")`/`run("cat")`.
+Launch long work with `wait=false`:
 
----
+    run(command="...", image="...", wait=false)
+    # -> {"operation_id": "op-1"}
 
-## Image Inspection (Free)
+    wait_operations(operation_ids=["op-1", "op-2"], mode="all" | "any")
 
-Inspect container filesystem without VM cost:
+`mode="any"` returns on the first completion — useful for racing
+multiple approaches. Operation states are `PENDING`, `ASSIGNED`,
+`EXECUTING`, `SUCCESS`, `FAILED`, `CANCELLED` (uppercase, matching
+the API enum). Full details: `contree://guide/async`.
 
-```
-list_files(image="<uuid>", path="/etc")       # List directory contents
-read_file(image="<uuid>", path="/etc/passwd") # Read file contents
-```
+## Built-in guide
 
-Prefer these over `run("ls ...")`/`run("cat ...")` for simple inspection.
+When something fails or you're unsure, consult the relevant section
+instead of guessing:
 
----
-
-## Guides
-
-Access documentation via resource URI or tool:
-
-| Guide | Resource URI | Tool Alternative |
-|-------|--------------|------------------|
-| Workflow patterns | `contree://guide/workflow` | `get_guide(section="workflow")` |
-| Async execution | `contree://guide/async` | `get_guide(section="async")` |
-| Tagging convention | `contree://guide/tagging` | `get_guide(section="tagging")` |
-| Tool reference | `contree://guide/reference` | `get_guide(section="reference")` |
-| Error handling | `contree://guide/errors` | `get_guide(section="errors")` |
-
-Use resources if supported by your agent runtime, otherwise use `get_guide()`.
+| URI | Tool | When to read |
+|-----|------|--------------|
+| `contree://guide/workflow` | `get_guide("workflow")` | Bootstrap protocol and anti-patterns |
+| `contree://guide/quickstart` | `get_guide("quickstart")` | Common patterns by example |
+| `contree://guide/reference` | `get_guide("reference")` | Per-tool parameters and image refs |
+| `contree://guide/state` | `get_guide("state")` | UUID lineage, "rollback" without sessions |
+| `contree://guide/async` | `get_guide("async")` | Parallel runs, fan-out / join |
+| `contree://guide/tagging` | `get_guide("tagging")` | Tag naming convention |
+| `contree://guide/errors` | `get_guide("errors")` | Failure modes and debugging |
 """
 
 import re

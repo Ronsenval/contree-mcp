@@ -123,8 +123,9 @@ class TestGenerateDocsHtml:
         )
 
         # Check some key content from SERVER_INSTRUCTIONS
-        assert "MANDATORY WORKFLOW" in html
-        assert "Guides" in html
+        assert "Non-negotiable rules" in html
+        assert "Built-in guide" in html
+        assert "contree://guide/" in html
 
     def test_includes_tool_names(self) -> None:
         """Test that tool names appear in the output."""

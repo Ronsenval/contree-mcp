@@ -863,7 +863,7 @@ class TestCheckFileExistsByHash(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.OK),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.OK),
         }
 
     @pytest.mark.asyncio
@@ -879,7 +879,7 @@ class TestCheckFileExistsByHashNotFound(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
         }
 
     @pytest.mark.asyncio
@@ -895,7 +895,7 @@ class TestCheckFileExistsByHashException(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
+            "HEAD /files/{sha256}": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
         }
 
     @pytest.mark.asyncio
@@ -905,47 +905,13 @@ class TestCheckFileExistsByHashException(TestCase):
         assert exists is False
 
 
-class TestCheckFileExists(TestCase):
-    """Tests for check_file_exists method."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.OK),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_true(self, contree_client: ContreeClient):
-        """Test uploaded file exists."""
-        exists = await contree_client.check_file_exists("file-123")
-
-        assert exists is True
-
-
-class TestCheckFileExistsFalse(TestCase):
-    """Tests for check_file_exists returns False."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_not_found(self, contree_client: ContreeClient):
-        """Test uploaded file does not exist."""
-        exists = await contree_client.check_file_exists("nonexistent")
-
-        assert exists is False
-
-
 class TestGetFileByHash(TestCase):
     """Tests for get_file_by_hash method."""
 
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(body={"uuid": "file-123", "sha256": "abc123"}),
+            "GET /files/{sha256}": FakeResponse(body={"uuid": "file-123", "sha256": "abc123"}),
         }
 
     @pytest.mark.asyncio
@@ -958,13 +924,67 @@ class TestGetFileByHash(TestCase):
         assert result.sha256 == "abc123"
 
 
+class TestGetFileByHashListShape(TestCase):
+    """Regression: backend wraps in {files:[…]}; client still parses."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /files/{sha256}": FakeResponse(
+                body={
+                    "files": [
+                        {
+                            "uuid": "file-456",
+                            "sha256": "deadbeef",
+                            "size": 12,
+                            "created_at": "2026-05-18T09:16:55Z",
+                            "updated_at": "2026-05-18T09:16:55Z",
+                            "future_field": "ignored",
+                        }
+                    ]
+                }
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_file_by_hash_unwraps_list_envelope(self, contree_client: ContreeClient):
+        result = await contree_client.get_file_by_hash("deadbeef")
+        assert result is not None
+        assert result.uuid == "file-456"
+        assert result.sha256 == "deadbeef"
+
+
+class TestGetFileByHashAdditiveFields(TestCase):
+    """Regression: unknown additive fields are ignored, not fatal."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /files/{sha256}": FakeResponse(
+                body={
+                    "uuid": "file-789",
+                    "sha256": "cafebabe",
+                    "size": 7,
+                    "stored_in": "s3://bucket/key",
+                    "metadata": {"owner": "someone"},
+                }
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_file_by_hash_ignores_unknown_fields(self, contree_client: ContreeClient):
+        result = await contree_client.get_file_by_hash("cafebabe")
+        assert result is not None
+        assert result.uuid == "file-789"
+
+
 class TestGetFileByHashNotFound(TestCase):
     """Tests for get_file_by_hash when not found."""
 
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
+            "GET /files/{sha256}": FakeResponse(http_status=HTTPStatus.NOT_FOUND),
         }
 
     @pytest.mark.asyncio
@@ -981,7 +1001,7 @@ class TestGetFileByHashOtherError(TestCase):
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
         return {
-            "GET /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
+            "GET /files/{sha256}": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
         }
 
     @pytest.mark.asyncio
@@ -1088,22 +1108,6 @@ class TestFileExistsException(TestCase):
     async def test_file_exists_on_exception(self, contree_client: ContreeClient):
         """Test file_exists returns False on exception."""
         exists = await contree_client.file_exists("img-123", "/some/path")
-        assert exists is False
-
-
-class TestCheckFileExistsException(TestCase):
-    """Tests for check_file_exists when an exception occurs."""
-
-    @pytest.fixture
-    def fake_responses(self) -> FakeResponses:
-        return {
-            "HEAD /files": FakeResponse(http_status=HTTPStatus.INTERNAL_SERVER_ERROR),
-        }
-
-    @pytest.mark.asyncio
-    async def test_check_file_exists_on_exception(self, contree_client: ContreeClient):
-        """Test check_file_exists returns False on exception."""
-        exists = await contree_client.check_file_exists("file-uuid-123")
         assert exists is False
 
 

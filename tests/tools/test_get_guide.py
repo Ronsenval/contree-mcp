@@ -12,7 +12,7 @@ async def test_get_guide_workflow():
     result = await get_guide("workflow")
 
     assert result.section == "workflow"
-    assert "Contree Workflow Guide" in result.content
+    assert "Core Workflow" in result.content
     assert "workflow" in result.available_sections
 
 
@@ -22,7 +22,7 @@ async def test_get_guide_reference():
     result = await get_guide("reference")
 
     assert result.section == "reference"
-    assert "Tools Reference" in result.content
+    assert "Tool Reference" in result.content
 
 
 @pytest.mark.anyio
@@ -40,7 +40,7 @@ async def test_get_guide_state():
     result = await get_guide("state")
 
     assert result.section == "state"
-    assert "State Management" in result.content
+    assert "State, Lineage" in result.content
 
 
 @pytest.mark.anyio
@@ -49,7 +49,7 @@ async def test_get_guide_async():
     result = await get_guide("async")
 
     assert result.section == "async"
-    assert "Async" in result.content
+    assert "Async and Parallel" in result.content
 
 
 @pytest.mark.anyio
@@ -58,7 +58,7 @@ async def test_get_guide_tagging():
     result = await get_guide("tagging")
 
     assert result.section == "tagging"
-    assert "Tagging Convention" in result.content
+    assert "Tag Convention" in result.content
 
 
 @pytest.mark.anyio
@@ -67,7 +67,7 @@ async def test_get_guide_errors():
     result = await get_guide("errors")
 
     assert result.section == "errors"
-    assert "Error Handling" in result.content
+    assert "Failure Handling" in result.content
 
 
 @pytest.mark.anyio

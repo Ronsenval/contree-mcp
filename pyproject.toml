@@ -31,6 +31,11 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Guide modules are pure markdown docstrings; tables and code blocks
+# legitimately exceed the line-length cap.
+"contree_mcp/resources/guide/*.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.10"
 strict = true
