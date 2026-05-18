@@ -171,3 +171,11 @@ class UpdateChecker:
         return self.parse_version(self.current_version) >= self.parse_version(
             self.state.latest_version,
         )
+
+
+# Module-level singleton. Both ``contree_mcp.__main__`` (which calls
+# ``refresh()`` once at startup) and ``contree_mcp.tools.whoami`` (which
+# reads the cached state on every invocation) consume this same
+# instance, so the in-memory ``state`` populated at startup is visible
+# everywhere — and tests can swap the singleton via ``monkeypatch``.
+update_checker = UpdateChecker()

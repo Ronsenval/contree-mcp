@@ -6,7 +6,7 @@ from contextlib import suppress
 
 from contree_mcp.arguments import PARSER_DESCRIPTION, PARSER_EPILOG, Parser
 from contree_mcp.server import amain
-from contree_mcp.update_check import UpdateChecker
+from contree_mcp.update_check import update_checker
 
 log = logging.getLogger(__name__)
 
@@ -22,18 +22,19 @@ def main() -> None:
     logging.basicConfig(level=parser.log_level, format="[%(levelname)s] %(message)s", stream=sys.stderr)
 
     # Update check runs after argparse so --help / --version skip it,
-    # and so the warning respects --log-level. refresh() is best-effort;
-    # is_latest() is a pure predicate.
-    checker = UpdateChecker()
+    # and so the warning respects --log-level. ``refresh()`` is
+    # best-effort; ``is_latest()`` is a pure predicate. The result is
+    # cached on the shared ``update_checker`` singleton, so the
+    # ``whoami`` tool can read it later without a second network call.
     with suppress(Exception):
-        checker.refresh()
-    if not checker.is_latest():
+        update_checker.refresh()
+    if not update_checker.is_latest():
         log.warning(
             "A new version of contree-mcp is available: %s (installed: %s)."
             " Upgrade with `uv tool install -U contree-mcp` or"
             " `pip install -U contree-mcp`.",
-            checker.state.latest_version,
-            checker.current_version,
+            update_checker.state.latest_version,
+            update_checker.current_version,
         )
 
     try:

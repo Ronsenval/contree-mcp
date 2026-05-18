@@ -97,6 +97,26 @@ multiple approaches. Operation states are `PENDING`, `ASSIGNED`,
 `EXECUTING`, `SUCCESS`, `FAILED`, `CANCELLED` (uppercase, matching
 the API enum). Full details: `contree://guide/async`.
 
+## Server upgrades
+
+`whoami` surfaces an `mcp_upgrade` field whenever this process is
+behind the latest published `contree-mcp` release on PyPI:
+
+    {
+      "mcp_version": "0.1.1",
+      "mcp_upgrade": {
+        "current": "0.1.1",
+        "latest": "0.1.5",
+        "command": "uv tool install -U contree-mcp  # or: pip install -U contree-mcp"
+      }
+    }
+
+When you see a non-null `mcp_upgrade`, tell the user the server is
+running an outdated build and quote `mcp_upgrade.command` verbatim.
+The check runs once at startup (a cached PyPI probe; opt out with
+`CONTREE_NO_UPDATE_CHECK=1`), so the field is stable for the lifetime
+of the process — there's no need to call `whoami` repeatedly.
+
 ## Built-in guide
 
 When something fails or you're unsure, consult the relevant section
