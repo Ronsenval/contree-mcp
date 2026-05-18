@@ -20,8 +20,13 @@ def seed_state(path, payload):
 
 
 @pytest.fixture()
-def state_path(tmp_path):
-    return tmp_path / "version_check.json"
+def state_path(tmp_path, request):
+    """Unique state file per test. Name disambiguator + explicit unlink so CI
+    runners that reuse tmp_path (or any other path-collision quirk) cannot
+    leak seeded state into a sibling test."""
+    path = tmp_path / f"{request.node.name}_version_check.json"
+    path.unlink(missing_ok=True)
+    return path
 
 
 HOUR = 3600.0

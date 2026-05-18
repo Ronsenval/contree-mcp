@@ -6,8 +6,6 @@ is missing, agents will misuse the tools (wrong key/value order, relative paths,
 
 import inspect
 
-import pytest
-
 from contree_mcp.resources.guide import SECTIONS
 from contree_mcp.tools.download import download
 from contree_mcp.tools.run import run

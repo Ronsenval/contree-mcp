@@ -180,8 +180,14 @@ class Config(MutableMapping[str, ConfigProfile]):
             base_project = stored.project
             auth_type = stored.auth_type
         else:
-            auth_type = AuthType.IAM
-            base_url = self.DEFAULT_IAM_URL
+            # Without a stored profile, infer the auth type from what was
+            # supplied: a project (CLI or env) means IAM; otherwise legacy JWT.
+            # Defaulting to IAM here used to break callers passing only
+            # ``--token`` + ``--url`` (the legacy JWT flow), which is the
+            # path the http_server tests exercise.
+            has_project = bool(project or env_project)
+            auth_type = AuthType.IAM if has_project else AuthType.JWT
+            base_url = self.DEFAULT_IAM_URL if auth_type == AuthType.IAM else ""
             base_token = None
             base_project = None
 
