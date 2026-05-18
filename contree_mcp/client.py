@@ -50,6 +50,25 @@ OperationTrackingKind = Literal["instance", "image_import"]
 log = logging.getLogger(__name__)
 
 
+def mcp_version() -> str:
+    """Installed ``contree-mcp`` version, or ``"unknown"`` for source checkouts."""
+    try:
+        return importlib.metadata.version("contree-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+# Single source of truth for the User-Agent string. Used by:
+#  - the ContreeClient HTTP headers (every backend call)
+#  - the UpdateChecker PyPI request (so PyPI sees the same identifier)
+#  - the ``--version`` CLI flag (so users can read the exact UA we emit)
+MCP_USER_AGENT = (
+    f"contree-mcp/{mcp_version()} "
+    f"Python/{'.'.join(map(str, sys.version_info))} "
+    f"{platform.platform()}"
+)
+
+
 class StreamResponse:
     __slots__ = ("status", "headers", "body_iter")
 
@@ -110,28 +129,11 @@ class ContreeError(Exception):
 
 
 class ContreeClient:
-    PYTHON_VERSION = f"{'.'.join(map(str, sys.version_info))}"
-    try:
-        LIBRARY_VERSION = importlib.metadata.version("contree-mcp")
-    except Exception:
-        LIBRARY_VERSION = "unknown"
-
-    OS_NAME = platform.system()
-    OS_VERSION = platform.release()
     POLL_CONCURRENCY = 10
 
     HEADERS = (
         ("Content-Type", "application/json"),
-        (
-            "User-Agent",
-            " ".join(
-                (
-                    f"contree-mcp/{LIBRARY_VERSION}",
-                    f"python/{PYTHON_VERSION}",
-                    f"{OS_NAME}/{OS_VERSION}",
-                )
-            ),
-        ),
+        ("User-Agent", MCP_USER_AGENT),
     )
 
     def __init__(

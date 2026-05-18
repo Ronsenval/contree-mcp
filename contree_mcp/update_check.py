@@ -19,13 +19,10 @@ the update check must never break the MCP server start-up.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import os
-import platform
 import re
-import sys
 import time
 from contextlib import suppress
 from dataclasses import asdict, dataclass
@@ -35,21 +32,12 @@ from pathlib import Path
 import httpx
 
 from . import config
+from .client import MCP_USER_AGENT, mcp_version
 
 log = logging.getLogger(__name__)
 
 PACKAGE_NAME = "contree-mcp"
-# Match the sentinel ContreeClient already uses when the distribution
-# isn't installed (editable checkout, source tree). Keeping one value
-# avoids divergent special-casing.
 UNKNOWN_VERSION = "unknown"
-
-
-def mcp_version() -> str:
-    try:
-        return importlib.metadata.version(PACKAGE_NAME)
-    except importlib.metadata.PackageNotFoundError:
-        return UNKNOWN_VERSION
 
 
 @dataclass(frozen=True)
@@ -120,11 +108,7 @@ class UpdateChecker:
             response = httpx.get(
                 self.PYPI_URL,
                 headers={
-                    "User-Agent": (
-                        f"{PACKAGE_NAME}/{self.current_version} "
-                        f"Python/{'.'.join(map(str, sys.version_info))} "
-                        f"{platform.platform()}"
-                    ),
+                    "User-Agent": MCP_USER_AGENT,
                     "Accept": "application/json",
                 },
                 timeout=self.NETWORK_TIMEOUT,

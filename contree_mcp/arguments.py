@@ -3,6 +3,7 @@ from pathlib import Path
 
 import argclass
 
+from .client import MCP_USER_AGENT
 from .config import CONTREE_HOME
 
 # Co-locate MCP caches with auth.ini and the update-check state under
@@ -54,6 +55,14 @@ class Parser(argclass.Parser):
     )
     mode: ServerMode = argclass.EnumArgument(
         ServerMode, default=ServerMode.STDIO, lowercase=True, help="Server transport mode"
+    )
+
+    version = argclass.Argument(
+        "-V",
+        "--version",
+        action=argclass.Actions.VERSION,
+        version=MCP_USER_AGENT,
+        help="Print the User-Agent string this server sends and exit",
     )
 
     log_level: int = argclass.LogLevel
