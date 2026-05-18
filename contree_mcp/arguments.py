@@ -39,13 +39,22 @@ PARSER_DESCRIPTION = (
 PARSER_EPILOG = """\
 IAM credentials live in $CONTREE_HOME/auth.ini (one [profile:<name>]
 section per account). Active profile: --profile > $CONTREE_PROFILE >
-[DEFAULT] profile. Profile fields default URL to the Nebius IAM
-endpoint when omitted.
+[DEFAULT] profile. Missing profile URL defaults to the Nebius IAM
+endpoint.
 
-Precedence: CLI flags > env vars > active profile. Passing --token
-(or CONTREE_TOKEN / NEBIUS_API_KEY) bypasses the profile entirely;
-URL and project then come from CLI/env/defaults. To layer per-field
-overrides on top of a stored profile, leave --token unset.
+Precedence (highest first, applied field by field):
+  1. CLI flags             --token / --project / --url
+  2. CONTREE_* env vars    CONTREE_TOKEN / CONTREE_PROJECT / CONTREE_URL
+  3. NEBIUS_* env vars     NEBIUS_API_KEY + NEBIUS_AI_PROJECT — only when
+                           BOTH are set (a lone NEBIUS_API_KEY left
+                           ambient for other tools is ignored)
+  4. Active profile
+
+Examples:
+  contree-mcp                         # default profile from auth.ini
+  contree-mcp --profile staging       # pick a different profile
+  CONTREE_TOKEN=NEW contree-mcp       # rotate token, keep project/url
+  contree-mcp --token X --project Y   # full override, profile bypassed
 
 Register a profile with `contree auth` from contree-cli:
   uv tool install contree-cli && contree auth

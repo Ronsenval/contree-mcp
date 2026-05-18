@@ -75,34 +75,45 @@ export NEBIUS_API_KEY="your-iam-key"
 export NEBIUS_AI_PROJECT="your-nebius-project-id"
 ```
 
-#### Precedence rule (important)
+#### Precedence (important)
 
-If a token is supplied externally — via `--token`, `CONTREE_TOKEN`,
-**or** `NEBIUS_API_KEY` — the profile file is **ignored entirely**.
-`url`, `project`, and `auth_type` then come from explicit CLI flags,
-the matching env vars (`CONTREE_URL` / `CONTREE_PROJECT` /
-`NEBIUS_AI_PROJECT`), or the IAM defaults. The resolved profile gets
-the synthetic name `env` to make this visible in logs.
+Field-by-field, highest first:
 
-Two consequences worth knowing:
+1. **CLI flags** — `--token`, `--project`, `--url`, `--profile`.
+2. **`CONTREE_*` env vars** — `CONTREE_TOKEN` / `CONTREE_PROJECT` /
+   `CONTREE_URL` / `CONTREE_PROFILE`. MCP-specific; always layered
+   on top of the profile.
+3. **`NEBIUS_*` env vars** — `NEBIUS_API_KEY` + `NEBIUS_AI_PROJECT`,
+   recognised **only when both are set** (a complete IAM credential).
+   A lone `NEBIUS_API_KEY` set ambiently for the Nebius SDK or
+   terraform provider is **ignored**, and the MCP server logs an
+   `info` line explaining why.
+4. **Active profile** from `auth.ini`. Picked by, in order, `--profile`
+   → `CONTREE_PROFILE` → the file's `[DEFAULT] profile = ...`.
 
-- Setting `CONTREE_TOKEN` and `CONTREE_PROJECT` in your shell does NOT
-  mix-and-match with a stored profile. The file is skipped.
-- `auth_type` is **JWT** when only a token is supplied (no project),
-  and **IAM** when both token and project are present. The legacy
-  `https://contree.dev` deployment uses JWT; the IAM default is
-  `https://api.tokenfactory.nebius.com/sandboxes`.
+Some practical implications:
 
-Token resolution order within the "external" path:
+- `contree-mcp` (no args) loads the active profile, even if your shell
+  has `NEBIUS_API_KEY` set for other tools.
+- `CONTREE_TOKEN=NEW contree-mcp` rotates the token but reuses the
+  profile's `project` and `url` — handy for short-lived tokens.
+- `contree-mcp --token X --project Y` populates token + project from
+  the CLI; `url` and `auth_type` still come from the loaded profile
+  unless `--url` / `--auth-type` are also supplied.
+- With no profile loaded and an incomplete `CONTREE_TOKEN` / `--token`,
+  the server stops with "No API token configured" rather than running
+  with half-set credentials.
+
+Token resolution order, per field:
 
 ```
---token  >  CONTREE_TOKEN  >  NEBIUS_API_KEY
---project  >  CONTREE_PROJECT  >  NEBIUS_AI_PROJECT
---url      >  CONTREE_URL      >  (IAM default if IAM; "" if JWT)
+token    --token   >  CONTREE_TOKEN   >  NEBIUS_API_KEY*   >  profile.token
+project  --project >  CONTREE_PROJECT >  NEBIUS_AI_PROJECT* >  profile.project
+url      --url     >  CONTREE_URL                          >  profile.url
+                                                          >  IAM default (IAM only)
 ```
 
-If no external token is set, the active profile from `auth.ini` is
-used as-is. `--profile` / `CONTREE_PROFILE` selects which profile.
+`*` `NEBIUS_*` are read only when both are set.
 
 Tokens passed via env may appear in process listings — prefer the
 profile file for routine use.

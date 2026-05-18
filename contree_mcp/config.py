@@ -164,74 +164,103 @@ class Config(MutableMapping[str, ConfigProfile]):
     ) -> ConfigProfile:
         """Resolve credentials.
 
-        Resolution rules:
+        Precedence is **CLI flag > env var > active profile**, applied
+        field by field. The active profile name comes from
+        ``profile`` arg > ``CONTREE_PROFILE`` env > the file's
+        ``[DEFAULT] profile`` line.
 
-        1. If a token is supplied externally — via ``--token``,
-           ``CONTREE_TOKEN``, or ``NEBIUS_API_KEY`` — the profile file is
-           **ignored entirely**. ``url``, ``project`` and ``auth_type``
-           come from explicit CLI flags, the matching env vars
-           (``CONTREE_URL`` / ``CONTREE_PROJECT`` / ``NEBIUS_AI_PROJECT``),
-           or sensible defaults. The resolved profile gets the synthetic
-           name ``"env"``. This makes env-driven setups deterministic and
-           lets hot-reload skip a file it would never consult.
+        Two corner cases worth knowing:
 
-        2. Otherwise, the active profile from ``auth.ini`` is the source
-           of truth. The profile name comes from the ``profile`` argument
-           > ``CONTREE_PROFILE`` env > the file's ``[DEFAULT] profile``
-           line.
+        * ``NEBIUS_API_KEY`` / ``NEBIUS_AI_PROJECT`` are the canonical
+          Nebius IAM credentials, often set ambiently for other tools
+          (terraform provider, SDK). To avoid hijacking the MCP server
+          they contribute **only when both are present** — a lone
+          ``NEBIUS_API_KEY`` is ignored, and the profile loads normally.
 
-        The ``NEBIUS_API_KEY`` / ``NEBIUS_AI_PROJECT`` env vars are the
-        canonical Nebius IAM credentials; recognising them keeps the MCP
-        server interchangeable with the rest of the Nebius tooling.
+        * ``CONTREE_*`` env vars are MCP-specific and always layer
+          per-field. ``CONTREE_TOKEN=...`` alone, for instance, rotates
+          the token while keeping the profile's project and URL.
+
+        * The ``auth_type`` keyword argument is only used as a fallback
+          when no profile is loaded. With a profile loaded, its
+          ``type =`` line wins (the stored token was issued for that
+          scheme).
         """
-        explicit_token = (
-            token
-            or os.environ.get("CONTREE_TOKEN")
-            or os.environ.get("NEBIUS_API_KEY")
-        )
-        explicit_project = (
-            project
-            or os.environ.get("CONTREE_PROJECT")
-            or os.environ.get("NEBIUS_AI_PROJECT")
-        )
-        explicit_url = url or os.environ.get("CONTREE_URL")
+        # CONTREE_* env vars: always layer per-field.
+        env_token = os.environ.get("CONTREE_TOKEN")
+        env_project = os.environ.get("CONTREE_PROJECT")
+        env_url = os.environ.get("CONTREE_URL")
 
-        if explicit_token is not None:
-            # Rule 1: file ignored. ``auth_type`` is the value the caller
-            # passed in (server.amain forwards ``parser.auth_type``;
-            # defaults to IAM). The default URL follows the auth scheme.
-            base_url = self.DEFAULT_IAM_URL if auth_type == AuthType.IAM else ""
-            return ConfigProfile(
-                name="env",
-                token=explicit_token,
-                url=(explicit_url or base_url).rstrip("/"),
-                auth_type=auth_type,
-                project=explicit_project,
+        # NEBIUS_* env vars: only layered when *both* are present
+        # (complete IAM set). A lone NEBIUS_API_KEY is ambient noise.
+        nebius_token = os.environ.get("NEBIUS_API_KEY")
+        nebius_project = os.environ.get("NEBIUS_AI_PROJECT")
+        if nebius_token and nebius_project:
+            env_token = env_token or nebius_token
+            env_project = env_project or nebius_project
+        elif nebius_token and not nebius_project:
+            log.info(
+                "Ignoring NEBIUS_API_KEY: NEBIUS_AI_PROJECT is not set. "
+                "Set both env vars together for an IAM credential pair, "
+                "or rely on the active auth.ini profile."
+            )
+        elif nebius_project and not nebius_token:
+            log.info(
+                "Ignoring NEBIUS_AI_PROJECT: NEBIUS_API_KEY is not set."
             )
 
-        # Rule 2: file is consulted. The profile's ``type`` line is
-        # authoritative — the caller-provided ``auth_type`` is ignored
-        # here, because the stored token was issued for whichever scheme
-        # the profile records.
+        # Similarly warn on partial CONTREE_* without a profile to back
+        # the missing fields — saves users a long stare at "no token".
+        if env_token and not env_project and not project:
+            log.debug(
+                "CONTREE_TOKEN set without CONTREE_PROJECT; project will "
+                "come from the active profile (if any).",
+            )
+        if env_project and not env_token and not token:
+            log.debug(
+                "CONTREE_PROJECT set without CONTREE_TOKEN; token will "
+                "come from the active profile (if any).",
+            )
+
+        # Identify the active profile.
         name = profile or os.environ.get("CONTREE_PROFILE") or self.__active
         stored = self.__profiles.get(name)
 
+        # Base values: the stored profile if any, else fall back to the
+        # caller-provided auth_type with empty everything else.
         if stored is not None:
-            return ConfigProfile(
-                name=name,
-                token=stored.token,
-                url=(explicit_url or stored.url).rstrip("/"),
-                auth_type=stored.auth_type,
-                project=explicit_project or stored.project,
-            )
+            base_token = stored.token
+            base_project = stored.project
+            base_url = stored.url
+            base_auth_type = stored.auth_type
+            base_name = name
+        else:
+            base_token = None
+            base_project = None
+            base_url = ""
+            base_auth_type = auth_type
+            base_name = name
 
-        # Unknown profile + no external token: return an empty stub.
-        # The server's "No API token configured" check will catch this
-        # and produce a helpful error.
+        # Layer env then CLI per field.
+        final_token = token or env_token or base_token
+        final_project = project or env_project or base_project
+        final_url = url or env_url or base_url
+        final_auth_type = base_auth_type
+
+        # IAM gets a default URL; JWT does not.
+        if not final_url and final_auth_type == AuthType.IAM:
+            final_url = self.DEFAULT_IAM_URL
+
+        # Synthetic name when there's no stored profile and credentials
+        # came from env/CLI only — distinguishes "explicit env/CLI"
+        # from "profile lookup" in the INFO log.
+        if stored is None and (token or env_token or project or env_project):
+            base_name = "env"
+
         return ConfigProfile(
-            name=name,
-            token=None,
-            url=(explicit_url or "").rstrip("/"),
-            auth_type=AuthType.JWT,
-            project=explicit_project,
+            name=base_name,
+            token=final_token,
+            url=final_url.rstrip("/"),
+            auth_type=final_auth_type,
+            project=final_project,
         )

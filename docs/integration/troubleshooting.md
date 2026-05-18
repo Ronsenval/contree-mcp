@@ -27,6 +27,20 @@ export CONTREE_URL="https://api.tokenfactory.nebius.com/sandboxes"
 export CONTREE_PROJECT="your-nebius-project-id"   # only for IAM auth
 ```
 
+### Server logs `Ignoring NEBIUS_API_KEY: NEBIUS_AI_PROJECT is not set`
+
+**Cause**: Your shell has `NEBIUS_API_KEY` set (typically for the
+Nebius SDK or terraform provider) but no `NEBIUS_AI_PROJECT`. The MCP
+server treats this as an incomplete IAM credential and falls back to
+the active profile from `auth.ini`. This is *not* an error — it's a
+deliberate guard against an ambient env var hijacking your saved
+profile.
+
+**Solution**: nothing to do if you wanted the profile to load. If you
+*meant* to authenticate via env, also export `NEBIUS_AI_PROJECT` (or
+use the MCP-specific `CONTREE_TOKEN` / `CONTREE_PROJECT`, which layer
+per-field on top of the profile and don't have this guard).
+
 ### "IAM auth requires a project ID" Error
 
 **Cause**: The active profile (or the env/CLI overrides) is IAM-typed

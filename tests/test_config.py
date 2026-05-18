@@ -183,11 +183,19 @@ def test_resolve_unknown_profile_falls_back_to_iam_default(
     assert resolved.url == Config.DEFAULT_IAM_URL
 
 
-def test_explicit_env_token_ignores_file(
+def test_ambient_nebius_api_key_does_not_hijack_profile(
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CONTREE_TOKEN+CONTREE_PROJECT in env → file profile is not consulted."""
+    """Ambient ``NEBIUS_API_KEY`` without ``NEBIUS_AI_PROJECT`` must NOT
+    hijack the resolver — the user likely has it set for the Nebius SDK
+    / terraform provider, and the MCP server should still load the
+    active profile.
+
+    Regression: a bare ``NEBIUS_API_KEY`` used to bypass the file
+    entirely and produce an IAM profile with no project, which then
+    failed at the IAM-without-project guard.
+    """
     _write(
         config_path,
         """
@@ -201,47 +209,30 @@ def test_explicit_env_token_ignores_file(
         project = STORED_PROJECT
         """,
     )
-    monkeypatch.setenv("CONTREE_TOKEN", "ENV_TOKEN")
-    monkeypatch.setenv("CONTREE_PROJECT", "ENV_PROJECT")
+    monkeypatch.setenv("NEBIUS_API_KEY", "ambient-key")
+    # NEBIUS_AI_PROJECT explicitly absent.
     cfg = Config(config_path)
     resolved = cfg.resolve()
 
-    assert resolved.name == "env"
-    assert resolved.token == "ENV_TOKEN"
-    assert resolved.project == "ENV_PROJECT"
-    # URL is the IAM default — NOT inherited from the stored profile.
-    assert resolved.url == Config.DEFAULT_IAM_URL
-    assert "STORED" not in (resolved.url or "")
+    assert resolved.name == "stored"
+    assert resolved.token == "STORED_TOKEN"
+    assert resolved.project == "STORED_PROJECT"
+    assert resolved.url == "https://STORED.example.com"
 
 
-def test_explicit_cli_token_ignores_file(config_path: Path) -> None:
-    """--token / --project on the cmdline also bypass the file."""
-    _write(
-        config_path,
-        """
-        [profile:stored]
-        type = iam
-        url = https://STORED.example.com
-        token = STORED_TOKEN
-        project = STORED_PROJECT
-        """,
-    )
-    cfg = Config(config_path)
-    resolved = cfg.resolve(token="cli-token", project="cli-proj")
-    assert resolved.name == "env"
-    assert resolved.token == "cli-token"
-    assert resolved.project == "cli-proj"
-    assert "STORED" not in (resolved.url or "")
-
-
-def test_nebius_api_key_is_recognised(
+def test_complete_nebius_env_layers_over_profile(
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """NEBIUS_API_KEY / NEBIUS_AI_PROJECT are honoured as external token sources."""
+    """When both ``NEBIUS_API_KEY`` and ``NEBIUS_AI_PROJECT`` are set
+    they form a complete IAM credential and layer over the profile.
+    """
     _write(
         config_path,
         """
+        [DEFAULT]
+        profile = stored
+
         [profile:stored]
         type = iam
         url = https://STORED.example.com
@@ -253,42 +244,98 @@ def test_nebius_api_key_is_recognised(
     monkeypatch.setenv("NEBIUS_AI_PROJECT", "nebius-project")
     cfg = Config(config_path)
     resolved = cfg.resolve()
+    # Profile still selects the auth_type (its `type =` line wins)
+    # and the URL (env_url unset, profile's URL kept).
+    assert resolved.name == "stored"
+    assert resolved.auth_type == AuthType.IAM
+    assert resolved.url == "https://STORED.example.com"
+    # Token + project replaced by env (per-field overlay).
     assert resolved.token == "nebius-token"
     assert resolved.project == "nebius-project"
-    assert resolved.auth_type == AuthType.IAM
-    # CONTREE_TOKEN takes precedence over NEBIUS_API_KEY when both are set.
-    monkeypatch.setenv("CONTREE_TOKEN", "contree-token")
-    resolved = cfg.resolve()
-    assert resolved.token == "contree-token"
 
 
-def test_auth_type_arg_overrides_default(
+def test_contree_token_layers_per_field_on_profile(
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``auth_type=AuthType.JWT`` passed to ``resolve()`` overrides the
-    IAM default in the external-token bypass branch.
+    """``CONTREE_TOKEN`` alone (token rotation) layers on top of the
+    profile — the project and URL come from the file.
 
-    With ``auth_type=IAM`` (the default), a token-only env still produces
-    an IAM profile — the resulting ``ConfigProfile`` will be rejected
-    later by the IAM-without-project guard in ``server.amain``. JWT mode
-    must be opted into via ``--auth-type=jwt`` / parser override.
+    Unlike ``NEBIUS_API_KEY``, ``CONTREE_*`` env vars are MCP-specific
+    and assumed to be intentional, so they always layer per-field.
+    """
+    _write(
+        config_path,
+        """
+        [DEFAULT]
+        profile = stored
+
+        [profile:stored]
+        type = iam
+        url = https://STORED.example.com
+        token = STORED_TOKEN
+        project = STORED_PROJECT
+        """,
+    )
+    monkeypatch.setenv("CONTREE_TOKEN", "rotated-token")
+    cfg = Config(config_path)
+    resolved = cfg.resolve()
+    assert resolved.name == "stored"
+    assert resolved.token == "rotated-token"
+    assert resolved.project == "STORED_PROJECT"
+    assert resolved.url == "https://STORED.example.com"
+
+
+def test_cli_overrides_layer_on_top_of_profile(config_path: Path) -> None:
+    """CLI flags layer per-field on top of the profile (highest precedence)."""
+    _write(
+        config_path,
+        """
+        [DEFAULT]
+        profile = stored
+
+        [profile:stored]
+        type = iam
+        url = https://STORED.example.com
+        token = STORED_TOKEN
+        project = STORED_PROJECT
+        """,
+    )
+    cfg = Config(config_path)
+    resolved = cfg.resolve(token="cli-token")
+    assert resolved.name == "stored"
+    assert resolved.token == "cli-token"
+    assert resolved.project == "STORED_PROJECT"
+    assert resolved.url == "https://STORED.example.com"
+
+
+def test_cli_complete_creds_without_profile(config_path: Path) -> None:
+    """No stored profile + complete CLI flags → ``env``-named profile."""
+    # No write — config_path doesn't exist; cfg has no profiles.
+    cfg = Config(config_path)
+    resolved = cfg.resolve(token="cli-token", project="cli-proj")
+    assert resolved.name == "env"
+    assert resolved.token == "cli-token"
+    assert resolved.project == "cli-proj"
+    assert resolved.auth_type == AuthType.IAM
+    # IAM gets a URL default.
+    assert resolved.url == Config.DEFAULT_IAM_URL
+
+
+def test_jwt_without_url_no_default(
+    config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JWT has no default URL — the resolver leaves the URL empty if
+    nothing was provided. The client/server will then reject the empty
+    URL with a clear message.
     """
     monkeypatch.setenv("CONTREE_TOKEN", "jwt-token")
     cfg = Config(config_path)
-
-    # Default: IAM (matches `--auth-type=iam`).
-    resolved_iam = cfg.resolve()
-    assert resolved_iam.auth_type == AuthType.IAM
-    assert resolved_iam.token == "jwt-token"
-    assert resolved_iam.url == Config.DEFAULT_IAM_URL
-
-    # JWT opt-in: no URL default, no project.
-    resolved_jwt = cfg.resolve(auth_type=AuthType.JWT)
-    assert resolved_jwt.auth_type == AuthType.JWT
-    assert resolved_jwt.token == "jwt-token"
-    assert resolved_jwt.project is None
-    assert resolved_jwt.url == ""
+    resolved = cfg.resolve(auth_type=AuthType.JWT)
+    assert resolved.token == "jwt-token"
+    assert resolved.auth_type == AuthType.JWT
+    assert resolved.url == ""
 
 
 def test_profile_repr_masks_token() -> None:
