@@ -1,3 +1,7 @@
+---
+icon: screwdriver-wrench
+---
+
 # Tools Reference
 
 All 17 tools for container execution, file management, and operations.

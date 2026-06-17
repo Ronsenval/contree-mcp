@@ -1,3 +1,7 @@
+---
+icon: ban
+---
+
 # cancel_operation
 
 Cancel a running operation.

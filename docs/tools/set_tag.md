@@ -1,3 +1,7 @@
+---
+icon: tag
+---
+
 # set_tag
 
 Set or remove a tag for an image.

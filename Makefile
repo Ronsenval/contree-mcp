@@ -30,3 +30,6 @@ build:  ## Build wheel + sdist
 clean:  ## Remove build artefacts and caches
 	rm -rf dist build *.egg-info .pytest_cache .mypy_cache .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} +
+
+docs-mintlify:
+	$(MAKE) -C docs mintlify

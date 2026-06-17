@@ -1,3 +1,7 @@
+---
+icon: upload
+---
+
 # upload
 
 Upload a file to Contree.

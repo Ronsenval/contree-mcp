@@ -1,3 +1,7 @@
+---
+icon: circle-question
+---
+
 # get_guide
 
 Get agent guide sections for Contree best practices.

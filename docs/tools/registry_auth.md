@@ -1,3 +1,7 @@
+---
+icon: key
+---
+
 # registry_auth
 
 Authenticate with a container registry via Personal Access Token.

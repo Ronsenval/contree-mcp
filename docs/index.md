@@ -1,3 +1,7 @@
+---
+icon: book-open-lines
+---
+
 # Overview
 
 [![PyPI](https://img.shields.io/pypi/v/contree-mcp.svg)](https://pypi.org/project/contree-mcp/)
@@ -94,7 +98,7 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 
 quickstart
 concepts/index

@@ -1,3 +1,7 @@
+---
+icon: file-import
+---
+
 # import_image
 
 Import OCI container image from registry. Spawns microVM.

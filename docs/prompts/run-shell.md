@@ -1,3 +1,7 @@
+---
+icon: terminal
+---
+
 # run-shell
 
 Run a shell command in an isolated container.

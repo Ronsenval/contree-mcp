@@ -1,3 +1,7 @@
+---
+icon: bug
+---
+
 # debug-failure
 
 Diagnose a failed command and suggest fixes.

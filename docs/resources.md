@@ -1,3 +1,7 @@
+---
+icon: database
+---
+
 # Resources
 
 MCP resource templates for reading files and metadata. No VM needed.

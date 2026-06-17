@@ -1,3 +1,7 @@
+---
+icon: hammer
+---
+
 # build-project
 
 Build a project: install dependencies and run tests.

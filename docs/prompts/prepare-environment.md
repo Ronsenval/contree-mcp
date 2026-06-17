@@ -1,3 +1,7 @@
+---
+icon: gear
+---
+
 # prepare-environment
 
 Prepare a container environment for a task, checking for existing images first.

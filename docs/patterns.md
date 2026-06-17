@@ -1,3 +1,7 @@
+---
+icon: shapes
+---
+
 # Patterns
 
 Common workflows and mistakes to avoid.

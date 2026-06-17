@@ -1,3 +1,7 @@
+---
+icon: arrows-rotate
+---
+
 # rsync
 
 Sync local files to Contree with smart caching. No VM needed.

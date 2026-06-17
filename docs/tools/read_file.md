@@ -1,3 +1,7 @@
+---
+icon: file-lines
+---
+
 # read_file
 
 Read a file from a container image without spawning a VM.

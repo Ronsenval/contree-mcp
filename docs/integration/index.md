@@ -1,3 +1,7 @@
+---
+icon: plug
+---
+
 # Integration
 
 Setting up and configuring Contree MCP.

@@ -25,6 +25,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinxcontrib.mermaid",
     "sphinx.ext.intersphinx",
+    "sphinx_mintlify_output",
 ]
 
 # MyST configuration
@@ -64,6 +65,14 @@ html_theme_options = {
         "color-brand-primary": "#82b1ff",
         "color-brand-content": "#82b1ff",
     },
+}
+
+# -- Mintlify output --------------------------------------------------------
+
+mintlify_docs_json = {
+    "name": "ConTree MCP",
+    "theme": "mint",
+    "logo": {"light": "_static/logo.svg", "dark": "_static/logo.svg"},
 }
 
 # Copy button settings
