@@ -58,7 +58,7 @@ mintlify-build:
 mintlify:
 	@echo "$(BLUE)Building Mintlify documentation...$(NC)"
 	$(MAKE) mintlify-clean
-	LC_ALL=C.UTF-8 $(MAKE) mintlify-build
+	$(MAKE) mintlify-build
 	@echo "$(GREEN)Build finished. Output: $(BUILDDIR)/mintlify/$(NC)"
 
 dirhtml:
