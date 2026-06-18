@@ -1,3 +1,7 @@
+---
+icon: triangle-exclamation
+---
+
 # Troubleshooting
 
 Common issues and solutions.

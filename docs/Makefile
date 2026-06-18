@@ -34,6 +34,7 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Usage:$(NC)"
 	@echo "  make html         # Build documentation"
+	@echo "  make mintlify     # Build Mintlify documentation"
 	@echo "  make clean html   # Clean rebuild"
 	@echo "  make serve        # Build and serve locally"
 
@@ -47,6 +48,18 @@ html:
 	$(SPHINXBUILD) -b html $(SPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/html
 	@echo ""
 	@echo "$(GREEN)Build finished. Output: $(BUILDDIR)/html/index.html$(NC)"
+
+mintlify-clean:
+	rm -rf $(BUILDDIR)/mintlify
+
+mintlify-build:
+	$(SPHINXBUILD) -b mintlify $(SPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/mintlify
+
+mintlify:
+	@echo "$(BLUE)Building Mintlify documentation...$(NC)"
+	$(MAKE) mintlify-clean
+	$(MAKE) mintlify-build
+	@echo "$(GREEN)Build finished. Output: $(BUILDDIR)/mintlify/$(NC)"
 
 dirhtml:
 	@echo "$(BLUE)Building directory-based HTML...$(NC)"

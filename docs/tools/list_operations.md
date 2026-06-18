@@ -1,3 +1,7 @@
+---
+icon: list-check
+---
+
 # list_operations
 
 List operations (running or completed).

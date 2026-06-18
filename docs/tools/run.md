@@ -1,3 +1,7 @@
+---
+icon: play
+---
+
 # run
 
 Execute command in isolated container. Spawns microVM (~2-5s startup).

@@ -1,3 +1,7 @@
+---
+icon: lightbulb
+---
+
 # Concepts
 
 Core ideas behind Contree MCP.

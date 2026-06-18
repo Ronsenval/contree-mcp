@@ -1,3 +1,7 @@
+---
+icon: diagram-project
+---
+
 # Workflows
 
 File sync and async execution patterns.

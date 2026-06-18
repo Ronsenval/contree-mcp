@@ -1,3 +1,7 @@
+---
+icon: code-fork
+---
+
 # parallel-tasks
 
 Run multiple tasks in parallel.

@@ -1,3 +1,7 @@
+---
+icon: layer-group
+---
+
 # Core Concepts
 
 How Contree runs code and manages container images.

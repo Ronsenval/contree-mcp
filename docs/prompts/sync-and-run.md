@@ -1,3 +1,7 @@
+---
+icon: rotate
+---
+
 # sync-and-run
 
 Sync local files to container and run a command.

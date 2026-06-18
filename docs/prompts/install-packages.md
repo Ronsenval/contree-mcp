@@ -1,3 +1,7 @@
+---
+icon: box-open
+---
+
 # install-packages
 
 Install packages and create a reusable image.

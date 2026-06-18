@@ -1,3 +1,7 @@
+---
+icon: hourglass-half
+---
+
 # wait_operations
 
 Wait for multiple operations to complete.

@@ -1,3 +1,7 @@
+---
+icon: clipboard-list
+---
+
 # Cheatsheet
 
 Quick reference card for AI agents using Contree MCP.

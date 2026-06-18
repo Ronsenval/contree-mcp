@@ -1,3 +1,7 @@
+---
+icon: magnifying-glass
+---
+
 # inspect-image
 
 Explore the contents of a container image.

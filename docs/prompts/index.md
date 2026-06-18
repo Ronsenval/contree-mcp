@@ -1,3 +1,7 @@
+---
+icon: comments
+---
+
 # Prompts Reference
 
 MCP prompts for common Contree workflows. Prompts provide structured instructions that guide AI agents through multi-step tasks.

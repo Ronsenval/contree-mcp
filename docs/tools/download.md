@@ -1,3 +1,7 @@
+---
+icon: download
+---
+
 # download
 
 Download a file from a container image to local filesystem.

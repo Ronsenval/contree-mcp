@@ -1,3 +1,7 @@
+---
+icon: rocket
+---
+
 # Quickstart
 
 Run your first container in 5 minutes.

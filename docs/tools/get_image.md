@@ -1,3 +1,7 @@
+---
+icon: image
+---
+
 # get_image
 
 Get image details by UUID or tag.

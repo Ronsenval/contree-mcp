@@ -1,3 +1,7 @@
+---
+icon: images
+---
+
 # list_images
 
 List available container images.

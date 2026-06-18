@@ -1,3 +1,7 @@
+---
+icon: magnifying-glass
+---
+
 # get_operation
 
 Get the status and result of an operation.

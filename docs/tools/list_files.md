@@ -1,3 +1,7 @@
+---
+icon: folder-open
+---
+
 # list_files
 
 List files and directories in a container image without spawning a VM.

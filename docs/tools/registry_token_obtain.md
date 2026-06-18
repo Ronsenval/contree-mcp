@@ -1,3 +1,7 @@
+---
+icon: ticket
+---
+
 # registry_token_obtain
 
 Open browser to create a Personal Access Token for a container registry.

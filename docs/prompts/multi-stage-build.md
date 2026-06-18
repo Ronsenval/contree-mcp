@@ -1,3 +1,7 @@
+---
+icon: layer-group
+---
+
 # multi-stage-build
 
 Multi-stage build with rollback points.

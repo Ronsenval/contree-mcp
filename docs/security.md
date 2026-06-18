@@ -1,3 +1,7 @@
+---
+icon: shield-halved
+---
+
 # Reporting Security Issues
 
 The Nebius team take security bugs seriously. We appreciate your efforts to responsibly disclose your findings, and 

@@ -1,3 +1,7 @@
+---
+icon: terminal
+---
+
 # run-python
 
 Run Python code in an isolated container.

@@ -1,3 +1,7 @@
+---
+icon: sliders
+---
+
 # Configuration
 
 Detailed configuration options for Contree MCP.
