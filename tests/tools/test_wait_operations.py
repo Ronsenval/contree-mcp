@@ -11,7 +11,13 @@ from contree_mcp.backend_types import (
 )
 from contree_mcp.context import CLIENT
 from contree_mcp.tools.wait_operations import WaitOperationsOutput, wait_operations
-from tests.conftest import FakeResponse, FakeResponses
+from tests.conftest import (
+    FakeResponse,
+    FakeResponses,
+    FakeResponseSequence,
+    make_completion_event,
+    make_sse_event,
+)
 
 from . import TestCase
 
@@ -438,3 +444,96 @@ class TestWaitMixedOperations(TestCase):
         assert "op-mixed-tracked" in result.completed
         assert "op-mixed-untracked" in result.completed
         assert result.timed_out is False
+
+
+class TestWaitOperationsViaSSE(TestCase):
+    """Completion delivered through the SSE events stream."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponse(sse_events=[make_completion_event(1)]),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(
+                    body={
+                        "kind": OperationKind.INSTANCE.value,
+                        "status": OperationStatus.EXECUTING.value,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "error": None,
+                        "metadata": None,
+                        "result": None,
+                    }
+                ),
+                FakeResponse(
+                    body={
+                        "kind": OperationKind.INSTANCE.value,
+                        "status": OperationStatus.SUCCESS.value,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "error": None,
+                        "metadata": None,
+                        "result": {"image": "img-sse", "tag": None},
+                    }
+                ),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_wait_via_events_stream(self) -> None:
+        result = await wait_operations(operation_ids=["op-sse-wait"], timeout=10.0)
+        assert "op-sse-wait" in result.completed
+        assert result.results["op-sse-wait"].status == OperationStatus.SUCCESS
+        assert result.timed_out is False
+
+
+class TestWaitOperationsSSEDisconnect(TestCase):
+    """Mid-stream disconnect — Last-Event-Id resume delivers completion."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponseSequence(
+                # First connection drops before completion
+                FakeResponse(sse_events=[make_sse_event(1, "stdout", {"value": "x", "encoding": "ascii"}, spid=1)]),
+                # Reconnect delivers the terminal event
+                FakeResponse(sse_events=[make_completion_event(2)]),
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(
+                    body={
+                        "kind": OperationKind.INSTANCE.value,
+                        "status": OperationStatus.EXECUTING.value,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "error": None,
+                        "metadata": None,
+                        "result": None,
+                    }
+                ),
+                FakeResponse(
+                    body={
+                        "kind": OperationKind.INSTANCE.value,
+                        "status": OperationStatus.EXECUTING.value,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "error": None,
+                        "metadata": None,
+                        "result": None,
+                    }
+                ),
+                FakeResponse(
+                    body={
+                        "kind": OperationKind.INSTANCE.value,
+                        "status": OperationStatus.SUCCESS.value,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "error": None,
+                        "metadata": None,
+                        "result": {"image": "img-resumed", "tag": None},
+                    }
+                ),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_disconnect_then_resume(self) -> None:
+        result = await wait_operations(operation_ids=["op-sse-resume"], timeout=10.0)
+        assert "op-sse-resume" in result.completed
+        assert result.results["op-sse-resume"].status == OperationStatus.SUCCESS
+        assert result.results["op-sse-resume"].result.image == "img-resumed"

@@ -290,6 +290,31 @@ class OperationKind(str, Enum):
         return self.value
 
 
+class OperationEventType(str, Enum):
+    """Event categories in the SSE stream from GET /operations/{id}/events.
+
+    ``SSE_ERROR`` is synthetic — produced by our SSE parser for
+    ``event: sse_error`` frames (plain-text server-side stream errors),
+    it never appears in the backend's OperationEventType enum.
+    """
+
+    INIT = "init"
+    SPAWN = "spawn"
+    STDIN = "stdin"
+    STDOUT = "stdout"
+    STDERR = "stderr"
+    EXIT = "exit"
+    TRUNCATED = "truncated"
+    SIZE_CAP = "size_cap"
+    NETWORK = "network"
+    SHUTDOWN = "shutdown"
+    COMPLETION = "completion"
+    SSE_ERROR = "sse_error"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class OperationResult(BaseModel):
     image: str | None = Field(default=None, description="Result image UUID or null")
     tag: str | None = Field(default=None, description="Assigned tag or null")

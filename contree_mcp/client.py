@@ -32,6 +32,7 @@ from .backend_types import (
     InstanceMetadata,
     InstanceResourcesLimits,
     InstanceSpawnResponse,
+    OperationEventType,
     OperationKind,
     OperationListResponse,
     OperationResponse,
@@ -129,6 +130,69 @@ class ContreeError(Exception):
         self.status_code = status_code
 
 
+async def iter_sse_events(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, Any]]:
+    """Yield one dict per SSE frame parsed from *lines*.
+
+    Normal frames carry an OperationEvent JSON object in ``data:`` —
+    that object is yielded as-is (it already contains ``id`` / ``type`` /
+    ``data``). Server-pushed error frames use ``event: sse_error`` with a
+    plain-text ``data:`` body — those surface as
+    ``{"type": "sse_error", "message": <text>}`` so callers can decide to
+    reconnect with ``Last-Event-Id``. Keepalive comments are discarded.
+    """
+    data_lines: list[str] = []
+    event_name: str | None = None
+    event_id: str | None = None
+
+    def emit() -> dict[str, Any] | None:
+        nonlocal event_name, event_id
+        name, eid = event_name, event_id
+        event_name = None
+        event_id = None
+        if not data_lines:
+            return None
+        body = "\n".join(data_lines)
+        data_lines.clear()
+        if name == OperationEventType.SSE_ERROR:
+            return {"type": OperationEventType.SSE_ERROR.value, "message": body}
+        try:
+            decoded = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(decoded, dict):
+            return None
+        if eid is not None and "id" not in decoded:
+            with suppress(ValueError):
+                decoded["id"] = int(eid)
+        return decoded
+
+    async for raw_line in lines:
+        line = raw_line.rstrip("\r\n")
+        if not line:
+            event = emit()
+            if event is not None:
+                yield event
+        elif line.startswith(":"):
+            pass  # SSE comment / keepalive
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip(" "))
+        elif line.startswith("event:"):
+            event_name = line[6:].strip() or None
+        elif line.startswith("id:"):
+            event_id = line[3:].strip() or None
+
+    event = emit()
+    if event is not None:
+        yield event
+
+
+def retry_after_seconds(headers: Headers, default: float = 1.0) -> float:
+    try:
+        return max(0.0, float(headers.get("Retry-After", "")))
+    except ValueError:
+        return default
+
+
 class ContreeClient:
     """HTTP client for the Contree backend.
 
@@ -144,7 +208,15 @@ class ContreeClient:
     build the right client from a resolved :class:`ConfigProfile`.
     """
 
-    POLL_CONCURRENCY = 10
+    # SSE reconnect tuning for the /operations/{id}/events stream.
+    SSE_RETRY_LIMIT = 5
+    SSE_RETRY_DELAY = 2.0
+    # Floor applied when a connect/read cycle made no forward progress —
+    # guards against a server that returns immediate empty streams.
+    SSE_PROGRESS_FLOOR = 0.5
+    # GET-polling interval used when the events endpoint is unavailable
+    # (older backends, unsupported operation kinds, missing permission).
+    FALLBACK_POLL_INTERVAL = 1.0
 
     # Default base URL per auth scheme. Mirrors
     # ``contree_cli.client.ContreeIAMClient.DEFAULT_URL`` / ``ContreeJWTClient``
@@ -168,7 +240,6 @@ class ContreeClient:
         cache: Cache,
         project: str | None = None,
         timeout: float = 30.0,
-        poll_interval: float = 1.0,
         auth_type: AuthType = AuthType.JWT,
     ):
         if auth_type == AuthType.IAM and not project:
@@ -182,8 +253,6 @@ class ContreeClient:
         self.timeout = httpx.Timeout(timeout)
         self._cache = cache
 
-        self._poll_interval = poll_interval
-        self._poll_semaphore = asyncio.Semaphore(self.POLL_CONCURRENCY)
         self._tracked_operations: dict[str, asyncio.Task[OperationResponse]] = {}
 
     @classmethod
@@ -192,7 +261,6 @@ class ContreeClient:
         profile: ConfigProfile,
         cache: Cache,
         timeout: float = 30.0,
-        poll_interval: float = 1.0,
     ) -> Self:
         """Build a client from a resolved :class:`ConfigProfile`.
 
@@ -219,7 +287,6 @@ class ContreeClient:
             cache=cache,
             project=profile.project,
             timeout=timeout,
-            poll_interval=poll_interval,
             auth_type=profile.auth_type,
         )
 
@@ -402,7 +469,7 @@ class ContreeClient:
         if not operation_id:
             raise ContreeError("No operation ID returned from import request")
 
-        # Start background polling task
+        # Start background completion watcher (SSE with polling fallback)
         self._track_operation(operation_id, kind="image_import", registry_url=registry_url, tag=tag)
         log.info("Importing image %s -> operation %s", registry_url, operation_id)
         return operation_id
@@ -670,13 +737,18 @@ class ContreeClient:
     async def _fetch_operation(self, operation_id: str) -> OperationResponse:
         response = await self._request("GET", f"/operations/{operation_id}", model=OperationResponse)
         result = response.body
-        await self.cache.put("operation", operation_id, result.model_dump())
+        # Only terminal operations are immutable — caching a non-terminal
+        # snapshot would go stale now that nothing refreshes it every second.
+        if result.status.is_terminal():
+            await self.cache.put("operation", operation_id, result.model_dump())
         return result
 
     async def get_operation(self, operation_id: str) -> OperationResponse:
         entry = await self.cache.get("operation", operation_id)
         if entry:
-            return OperationResponse.model_validate(entry.data)
+            cached = OperationResponse.model_validate(entry.data)
+            if cached.status.is_terminal():
+                return cached
         return await self._fetch_operation(operation_id)
 
     async def cancel_operation(self, operation_id: str) -> OperationStatus:
@@ -715,8 +787,8 @@ class ContreeClient:
 
         log.debug("Tracking operation %s (kind=%s)", operation_id, kind)
         task = asyncio.create_task(
-            self._poll_until_complete(operation_id, kind, metadata),
-            name=f"poll-{operation_id[:8]}",
+            self.stream_until_complete(operation_id, kind, metadata),
+            name=f"events-{operation_id[:8]}",
         )
         self._tracked_operations[operation_id] = task
         return task
@@ -724,22 +796,127 @@ class ContreeClient:
     def is_tracked(self, operation_id: str) -> bool:
         return operation_id in self._tracked_operations
 
-    async def _poll_until_complete(
+    @cached_property
+    def events_timeout(self) -> httpx.Timeout:
+        # The SSE stream idles between events (keepalive comments only) —
+        # a read timeout would kill long-running operations mid-wait.
+        return httpx.Timeout(
+            connect=self.timeout.connect,
+            read=None,
+            write=self.timeout.write,
+            pool=self.timeout.pool,
+        )
+
+    async def fetch_terminal_operation(self, operation_id: str, interval: float) -> OperationResponse:
+        """GET the operation until its status is terminal."""
+        while True:
+            result = await self._fetch_operation(operation_id)
+            if result.status.is_terminal():
+                return result
+            log.debug("Operation %s still %s", operation_id, result.status.value)
+            await asyncio.sleep(interval)
+
+    async def watch_operation_events(self, operation_id: str) -> OperationResponse:
+        """Block on the SSE stream until the operation is terminal.
+
+        Consumes ``GET /operations/{id}/events?follow=1`` and returns the
+        authoritative ``GET /operations/{id}`` response once the terminal
+        ``completion`` event arrives. Reconnects with ``Last-Event-Id``
+        after stream drops; honours 425 (not streamable yet) and 410
+        (finished, events not yet durable) with their ``Retry-After``.
+        Degrades to plain GET polling when the events endpoint is
+        unavailable (older backends, unsupported operation kinds,
+        missing permission) or reconnects keep failing.
+        """
+        last_id = -1
+        failures = 0
+        while True:
+            headers: dict[str, str] = {}
+            if last_id >= 0:
+                headers["Last-Event-Id"] = str(last_id)
+            progressed = False
+            try:
+                async with self.session.stream(
+                    "GET",
+                    f"{self.base_url}/operations/{operation_id}/events",
+                    params={"follow": "1"},
+                    headers=headers,
+                    timeout=self.events_timeout,
+                ) as response:
+                    if response.status_code in (410, 425):
+                        delay = retry_after_seconds(response.headers)
+                        log.debug(
+                            "Events for %s not ready (HTTP %d), retrying in %.1fs",
+                            operation_id,
+                            response.status_code,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    if 400 <= response.status_code < 500:
+                        log.debug(
+                            "Events endpoint unavailable for %s (HTTP %d), falling back to polling",
+                            operation_id,
+                            response.status_code,
+                        )
+                        break
+                    if response.status_code >= 500:
+                        failures += 1
+                    else:
+                        failures = 0
+                        async for event in iter_sse_events(response.aiter_lines()):
+                            event_id = event.get("id")
+                            if isinstance(event_id, int) and event_id > last_id:
+                                last_id = event_id
+                                progressed = True
+                            event_type = event.get("type")
+                            if event_type == OperationEventType.COMPLETION:
+                                return await self.fetch_terminal_operation(
+                                    operation_id, interval=self.SSE_PROGRESS_FLOOR
+                                )
+                            if event_type == OperationEventType.SSE_ERROR:
+                                log.warning(
+                                    "Server-side stream error for %s (last_id=%d): %s",
+                                    operation_id,
+                                    last_id,
+                                    event.get("message"),
+                                )
+            except httpx.HTTPError as exc:
+                failures += 1
+                log.debug("SSE stream for %s broken (last_id=%d): %s", operation_id, last_id, exc)
+
+            # Stream ended without a completion event — the op may already
+            # be terminal (e.g. the completion frame was lost in transit).
+            with suppress(Exception):
+                result = await self._fetch_operation(operation_id)
+                if result.status.is_terminal():
+                    return result
+
+            if failures >= self.SSE_RETRY_LIMIT:
+                log.warning(
+                    "Giving up on SSE for %s after %d failures, falling back to polling",
+                    operation_id,
+                    failures,
+                )
+                break
+            if failures:
+                await asyncio.sleep(self.SSE_RETRY_DELAY)
+            elif not progressed:
+                await asyncio.sleep(self.SSE_PROGRESS_FLOOR)
+
+        return await self.fetch_terminal_operation(operation_id, interval=self.FALLBACK_POLL_INTERVAL)
+
+    async def stream_until_complete(
         self,
         operation_id: str,
         kind: OperationTrackingKind,
         metadata: dict[str, Any],
     ) -> OperationResponse:
         try:
-            async with self._poll_semaphore:
-                while True:
-                    result = await self._fetch_operation(operation_id)
-                    if result.status.is_terminal():
-                        log.debug("Operation %s completed: %s", operation_id, result.status.value)
-                        await self._cache_lineage(operation_id, kind, result, metadata)
-                        return result
-                    log.debug("Operation %s still %s", operation_id, result.status.value)
-                    await asyncio.sleep(self._poll_interval)
+            result = await self.watch_operation_events(operation_id)
+            log.debug("Operation %s completed: %s", operation_id, result.status.value)
+            await self._cache_lineage(operation_id, kind, result, metadata)
+            return result
         finally:
             # noinspection PyAsyncCall
             self._tracked_operations.pop(operation_id, None)

@@ -11,7 +11,7 @@ from contree_mcp.backend_types import (
     OperationStatus,
 )
 from contree_mcp.tools.import_image import import_image
-from tests.conftest import FakeResponse, FakeResponses
+from tests.conftest import FakeResponse, FakeResponses, make_completion_event
 
 from . import TestCase
 
@@ -66,6 +66,9 @@ class TestImportImageWaitTrue(TestCase):
                 http_status=HTTPStatus.ACCEPTED,
                 body={"uuid": "op-import-wait-123"},
                 headers=(("Location", "/v1/operations/op-import-wait-123"),),
+            ),
+            "GET /operations/{uuid}/events": FakeResponse(
+                sse_events=[make_completion_event(1, result_image="img-imported-result")]
             ),
             "GET /operations/{uuid}": FakeResponse(
                 body={
