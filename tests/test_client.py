@@ -1459,6 +1459,28 @@ class TestSSEGone(TestCase):
         assert result.status == OperationStatus.SUCCESS
 
 
+class TestSSEGoneTerminal(TestCase):
+    """410 persists (events never durable) but the operation is already
+    terminal — return the terminal result instead of timing out."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponse(
+                http_status=HTTPStatus.GONE, headers=(("Retry-After", "30"),)
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-gone-done", "EXECUTING")),
+                FakeResponse(body=operation_body("op-gone-done", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_returns_terminal_without_retry_loop(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-gone-done", max_wait=2)
+        assert result.status == OperationStatus.SUCCESS
+
+
 class TestSSEFallbackToPolling(TestCase):
     """Events endpoint missing (404) — degrade to GET polling."""
 

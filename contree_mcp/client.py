@@ -844,6 +844,14 @@ class ContreeClient:
                     timeout=self.events_timeout,
                 ) as response:
                     if response.status_code in (410, 425):
+                        # 410 means the operation already finished but the
+                        # event artifact is not durable yet — the terminal
+                        # GET result is authoritative, so return it instead
+                        # of retrying the stream into a misleading timeout.
+                        with suppress(Exception):
+                            result = await self._fetch_operation(operation_id)
+                            if result.status.is_terminal():
+                                return result
                         delay = retry_after_seconds(response.headers)
                         log.debug(
                             "Events for %s not ready (HTTP %d), retrying in %.1fs",
