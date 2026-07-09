@@ -15,7 +15,7 @@ from contree_mcp.backend_types import (
 )
 from contree_mcp.context import FILES_CACHE
 from contree_mcp.tools.run import run
-from tests.conftest import FakeResponse, FakeResponses
+from tests.conftest import FakeResponse, FakeResponses, make_completion_event, make_sse_event
 
 from . import TestCase
 
@@ -42,7 +42,7 @@ class TestRunCommandBasic(TestCase):
 
 
 class TestRunCommandWithWait(TestCase):
-    """Test run_command with wait=true."""
+    """Test run_command with wait=true (completion signalled via SSE events)."""
 
     @pytest.fixture
     def fake_responses(self) -> FakeResponses:
@@ -51,6 +51,12 @@ class TestRunCommandWithWait(TestCase):
                 http_status=HTTPStatus.ACCEPTED,
                 body={"uuid": "op-wait-123"},
                 headers=(("Location", "/v1/operations/op-wait-123"),),
+            ),
+            "GET /operations/{uuid}/events": FakeResponse(
+                sse_events=[
+                    make_sse_event(1, "stdout", {"value": "hello world", "encoding": "ascii"}, spid=1),
+                    make_completion_event(2, result_image="img-result-wait"),
+                ]
             ),
             "GET /operations/{uuid}": FakeResponse(
                 body={

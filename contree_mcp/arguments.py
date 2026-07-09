@@ -113,7 +113,7 @@ class Parser(argclass.Parser):
         ServerMode, default=ServerMode.STDIO, lowercase=True, help="Server transport mode"
     )
 
-    version = argclass.Argument(
+    version: str = argclass.Argument(
         "-V",
         "--version",
         action=argclass.Actions.VERSION,

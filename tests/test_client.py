@@ -15,12 +15,15 @@ from contree_mcp.backend_types import (
     Stream,
 )
 from contree_mcp.cache import Cache
-from contree_mcp.client import ContreeClient, ContreeError
+from contree_mcp.client import ContreeClient, ContreeError, iter_sse_events
 from contree_mcp.config import AuthType, ConfigProfile
 from tests.conftest import (
     FakeResponse,
     FakeResponses,
+    FakeResponseSequence,
+    make_completion_event,
     make_image,
+    make_sse_event,
 )
 from tests.tools import TestCase
 
@@ -1280,3 +1283,272 @@ class TestCloseWithTrackedOperationsCancelError(TestCase):
         # Close should not raise even if cancel fails
         await contree_client.close()
         assert "session" not in contree_client.__dict__
+
+
+# =============================================================================
+# SSE events mechanism
+# =============================================================================
+
+
+async def sse_lines(text: str) -> AsyncIterator[str]:
+    for line in text.splitlines():
+        yield line
+
+
+async def collect_events(text: str) -> list[dict]:
+    return [event async for event in iter_sse_events(sse_lines(text))]
+
+
+def operation_body(uuid: str, status: str) -> dict:
+    return {
+        "uuid": uuid,
+        "kind": "instance",
+        "status": status,
+        "error": None,
+        "metadata": None,
+        "result": {"image": "img-result", "tag": None} if status == "SUCCESS" else None,
+    }
+
+
+class TestIterSSEEvents:
+    """Unit tests for the SSE frame parser."""
+
+    @pytest.mark.asyncio
+    async def test_normal_frame(self):
+        events = await collect_events(
+            'id: 1\nevent: stdout\ndata: {"id": 1, "type": "stdout", "data": {"value": "hi", "encoding": "ascii"}}\n\n'
+        )
+        assert events == [{"id": 1, "type": "stdout", "data": {"value": "hi", "encoding": "ascii"}}]
+
+    @pytest.mark.asyncio
+    async def test_keepalive_comment_skipped(self):
+        assert await collect_events(": keepalive\n\n") == []
+
+    @pytest.mark.asyncio
+    async def test_multiline_data_joined(self):
+        events = await collect_events('data: {"id": 2,\ndata: "type": "init"}\n\n')
+        assert events == [{"id": 2, "type": "init"}]
+
+    @pytest.mark.asyncio
+    async def test_sse_error_frame(self):
+        events = await collect_events("event: sse_error\ndata: stream exploded\n\n")
+        assert events == [{"type": "sse_error", "message": "stream exploded"}]
+
+    @pytest.mark.asyncio
+    async def test_frame_id_injected_when_data_lacks_it(self):
+        events = await collect_events('id: 7\nevent: exit\ndata: {"type": "exit"}\n\n')
+        assert events == [{"type": "exit", "id": 7}]
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_skipped(self):
+        assert await collect_events("data: not-json\n\n") == []
+
+    @pytest.mark.asyncio
+    async def test_non_dict_json_skipped(self):
+        assert await collect_events("data: [1, 2, 3]\n\n") == []
+
+    @pytest.mark.asyncio
+    async def test_final_frame_emitted_at_eof(self):
+        events = await collect_events('id: 3\nevent: completion\ndata: {"id": 3, "type": "completion"}')
+        assert events == [{"id": 3, "type": "completion"}]
+
+    @pytest.mark.asyncio
+    async def test_multiple_frames(self):
+        events = await collect_events(
+            ': keepalive\n\nid: 1\nevent: stdout\ndata: {"id": 1, "type": "stdout"}\n\n'
+            'id: 2\nevent: completion\ndata: {"id": 2, "type": "completion"}\n\n'
+        )
+        assert [event["type"] for event in events] == ["stdout", "completion"]
+
+
+class TestSSEHappyPath(TestCase):
+    """Completion event on the first SSE connection."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponse(
+                sse_events=[
+                    make_sse_event(1, "stdout", {"value": "hi", "encoding": "ascii"}, spid=1),
+                    make_completion_event(2),
+                ]
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-sse", "EXECUTING")),
+                FakeResponse(body=operation_body("op-sse", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_wait_completes_via_events(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-sse", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+        assert result.result is not None
+        assert result.result.image == "img-result"
+
+
+class TestSSEReconnect(TestCase):
+    """Stream drops without completion; reconnect delivers the rest."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponseSequence(
+                FakeResponse(sse_events=[make_sse_event(1, "stdout", {"value": "a", "encoding": "ascii"}, spid=1)]),
+                FakeResponse(
+                    sse_events=[
+                        make_sse_event(2, "stdout", {"value": "b", "encoding": "ascii"}, spid=1),
+                        make_completion_event(3),
+                    ]
+                ),
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-reconnect", "EXECUTING")),
+                FakeResponse(body=operation_body("op-reconnect", "EXECUTING")),
+                FakeResponse(body=operation_body("op-reconnect", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_reconnect_delivers_completion(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-reconnect", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestSSETooEarly(TestCase):
+    """425 with Retry-After before the stream becomes available."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponseSequence(
+                FakeResponse(http_status=HTTPStatus.TOO_EARLY, headers=(("Retry-After", "0"),)),
+                FakeResponse(sse_events=[make_completion_event(1)]),
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-early", "PENDING")),
+                FakeResponse(body=operation_body("op-early", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_retries_after_425(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-early", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestSSEGone(TestCase):
+    """410 with Retry-After when events are not durable yet."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponseSequence(
+                FakeResponse(http_status=HTTPStatus.GONE, headers=(("Retry-After", "0"),)),
+                FakeResponse(sse_events=[make_completion_event(1)]),
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-gone", "EXECUTING")),
+                FakeResponse(body=operation_body("op-gone", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_retries_after_410(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-gone", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestSSEGoneTerminal(TestCase):
+    """410 persists (events never durable) but the operation is already
+    terminal — return the terminal result instead of timing out."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponse(
+                http_status=HTTPStatus.GONE, headers=(("Retry-After", "30"),)
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-gone-done", "EXECUTING")),
+                FakeResponse(body=operation_body("op-gone-done", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_returns_terminal_without_retry_loop(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-gone-done", max_wait=2)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestSSEFallbackToPolling(TestCase):
+    """Events endpoint missing (404) — degrade to GET polling."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-legacy", "EXECUTING")),
+                FakeResponse(body=operation_body("op-legacy", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_polling_fallback(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-legacy", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestSSEServerErrorFrame(TestCase):
+    """`event: sse_error` mid-stream — reconnect resumes from last id."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}/events": FakeResponseSequence(
+                FakeResponse(
+                    sse_events=[
+                        make_sse_event(1, "stdout", {"value": "a", "encoding": "ascii"}, spid=1),
+                        {"type": "sse_error", "message": "producer restarted"},
+                    ]
+                ),
+                FakeResponse(sse_events=[make_completion_event(2)]),
+            ),
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-err", "EXECUTING")),
+                FakeResponse(body=operation_body("op-err", "EXECUTING")),
+                FakeResponse(body=operation_body("op-err", "SUCCESS")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_recovers_from_sse_error(self, contree_client: ContreeClient):
+        result = await contree_client.wait_for_operation("op-err", max_wait=10)
+        assert result.status == OperationStatus.SUCCESS
+
+
+class TestOperationCacheTerminalOnly(TestCase):
+    """Non-terminal operations must never be served from cache."""
+
+    @pytest.fixture
+    def fake_responses(self) -> FakeResponses:
+        return {
+            "GET /operations/{uuid}": FakeResponseSequence(
+                FakeResponse(body=operation_body("op-cache", "EXECUTING")),
+                FakeResponse(body=operation_body("op-cache", "SUCCESS")),
+                # Only reachable if the terminal result was NOT cached
+                FakeResponse(body=operation_body("op-cache", "FAILED")),
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_not_cached(self, contree_client: ContreeClient):
+        first = await contree_client.get_operation("op-cache")
+        assert first.status == OperationStatus.EXECUTING
+
+        second = await contree_client.get_operation("op-cache")
+        assert second.status == OperationStatus.SUCCESS
+
+        # Terminal result is cached — the FAILED response must not be reached
+        third = await contree_client.get_operation("op-cache")
+        assert third.status == OperationStatus.SUCCESS

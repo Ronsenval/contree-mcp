@@ -14,7 +14,7 @@ import uvicorn
 from pydantic import BaseModel
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 from contree_mcp.backend_types import (
@@ -98,6 +98,44 @@ def make_operation_response(
     )
 
 
+def make_sse_event(
+    event_id: int,
+    event_type: str,
+    data: dict | None = None,
+    spid: int | None = None,
+) -> dict:
+    """Create one OperationEvent dict for SSE fake streams."""
+    event: dict = {
+        "id": event_id,
+        "ts": "2026-01-01T00:00:00.000000000Z",
+        "type": event_type,
+        "data": data or {},
+    }
+    if spid is not None:
+        event["spid"] = spid
+    return event
+
+
+def make_completion_event(
+    event_id: int = 10,
+    status: str = "SUCCESS",
+    result_image: str | None = "img-result",
+    error: str | None = None,
+) -> dict:
+    """Create the terminal `completion` OperationEvent."""
+    return make_sse_event(
+        event_id,
+        "completion",
+        {
+            "status": status,
+            "result_image_uuid": result_image,
+            "error": error,
+            "duration_ms": 100,
+            "image_size_bytes": 0,
+        },
+    )
+
+
 def make_directory_state(
     id: int = 123,
     name: str | None = "test",
@@ -129,15 +167,52 @@ class FakeResponse:
         http_status: HTTP status code
         body: Response body (BaseModel, list, dict, str, or None)
         headers: Response headers as tuple of (name, value) pairs
+        sse_events: when set, respond with ``text/event-stream`` and write
+            each dict as one SSE frame (``id:`` / ``event:`` / ``data:``),
+            then close the stream. A dict with ``{"type": "sse_error", ...}``
+            is written as a plain-text ``event: sse_error`` frame.
     """
 
     http_status: HTTPStatus = HTTPStatus.OK
     body: BaseModel | list | dict | str | None = None
     headers: tuple[tuple[str, str], ...] = ()
+    sse_events: list[dict] | None = None
+
+
+class FakeResponseSequence:
+    """Return a different FakeResponse per request; the last one repeats.
+
+    Lets tests script multi-connection behaviors like "425 first, then a
+    working SSE stream" or "disconnect mid-stream, deliver the rest on
+    reconnect".
+    """
+
+    def __init__(self, *responses: FakeResponse):
+        assert responses
+        self._responses = list(responses)
+        self._index = 0
+
+    def next(self) -> FakeResponse:
+        response = self._responses[min(self._index, len(self._responses) - 1)]
+        self._index += 1
+        return response
 
 
 # Type alias for fake responses dictionary
-FakeResponses = dict[str, FakeResponse]
+FakeResponses = dict[str, "FakeResponse | FakeResponseSequence"]
+
+
+def sse_frame(event: dict) -> bytes:
+    """Serialize one event dict to an SSE wire frame."""
+    if event.get("type") == "sse_error":
+        return f"event: sse_error\ndata: {event.get('message', 'stream error')}\n\n".encode()
+    lines = []
+    if "id" in event:
+        lines.append(f"id: {event['id']}")
+    if "type" in event:
+        lines.append(f"event: {event['type']}")
+    lines.append(f"data: {json.dumps(event)}")
+    return ("\n".join(lines) + "\n\n").encode()
 
 
 # =============================================================================
@@ -182,7 +257,7 @@ class RouteMatcher:
         result += re.escape(path[last_end:])
         return result
 
-    def match(self, method: str, path: str) -> FakeResponse | None:
+    def match(self, method: str, path: str) -> "FakeResponse | FakeResponseSequence | None":
         """Match a request to a fake response.
 
         Args:
@@ -283,6 +358,24 @@ async def http_fake_server(
                 content=json.dumps({"error": f"No fake response for {method} {path}"}),
                 status_code=404,
                 media_type="application/json",
+            )
+
+        if isinstance(fake_response, FakeResponseSequence):
+            fake_response = fake_response.next()
+
+        if fake_response.sse_events is not None:
+            events = list(fake_response.sse_events)
+
+            async def event_stream() -> AsyncIterator[bytes]:
+                yield b": keepalive\n\n"
+                for event in events:
+                    yield sse_frame(event)
+
+            return StreamingResponse(
+                event_stream(),
+                status_code=fake_response.http_status.value,
+                headers=dict(fake_response.headers),
+                media_type="text/event-stream",
             )
 
         content = _serialize_body(fake_response.body)
