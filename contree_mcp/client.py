@@ -231,8 +231,10 @@ class ContreeClientAdapter:
         if entry:
             return str(entry.data["text"])
 
-        # contree-client has no high-level API for the backend's ls-like text
-        # formatting, so use its low-level transport for the `?text` variant.
+        # Keep using contree-client's low-level transport for the backend's
+        # `?text` variant for now. The decision between returning JSON here or
+        # moving the ls-like formatting into contree-client is temporarily
+        # deferred.
         spec = RequestSpec(
             method="GET",
             path=f"/inspect/{image_uuid}/list",
